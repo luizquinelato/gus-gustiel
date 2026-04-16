@@ -1,0 +1,246 @@
+# Gustiel — Architecture Guide (v4.43.03)
+
+## Overview
+
+Gustiel is built on an **ETL (Extract → Transform → Load)** pattern.
+Every feature must follow this layered separation of concerns.
+The resolver is only the entry/exit door — it never contains business logic.
+
+---
+
+## Layer Map
+
+```
+src/
+├── config/
+│   └── constants.js               # Versions, workflow dicts, field IDs — no logic
+│
+├── services/
+│   ├── jira-api-service.js        # Raw HTTP I/O — the ONLY layer that calls Jira
+│   └── confluence-api-service.js  # Confluence page CRUD, folder + space resolution
+│
+├── extractors/               # EXTRACT layer
+│   └── jira-extractor.js     # Raw API response → clean domain objects
+│
+├── transformers/             # TRANSFORM layer
+│   └── portfolio-transformer.js  # Pure calculations — no I/O, no rendering
+│
+├── formatters/               # LOAD layer
+│   ├── markdown-formatter.js      # Domain data → Markdown (chat output)
+│   └── confluence-formatter.js    # Markdown → Confluence Storage Format (XHTML)
+│
+├── resolvers/                # Entry/Exit handlers — thin orchestrators only
+│   ├── portfolio-report-resolver.js   # Full ETL report (summary + team pages); multi-key Isolated/Merged
+│   ├── confluence-export-resolver.js  # Confluence export (single or combined page); scope-aware
+│   ├── prepare-export-resolver.js     # ETL step 1 — team discovery; multi-key (one session/key)
+│   ├── lead-time-resolver.js          # ETL step 2 — LCT batched changelog query
+│   ├── check-cache-resolver.js        # ETL cache state probe; scope detection
+│   ├── portfolio-analysis-resolver.js # Analysis / Q&A skills; multi-key Isolated/Merged
+│   ├── system-resolver.js
+│   └── creator-resolver.js
+│
+└── utils/
+    └── token-estimator.js    # fitWithinBudget() — used by summary phase
+```
+
+---
+
+## Layer Responsibilities
+
+### `services/` — Raw I/O
+- Only layer allowed to make HTTP calls to Jira.
+- Rate limiting, retries, and any future caching belong here.
+- Returns raw API JSON — never interprets it.
+
+### `extractors/` — Extract
+- Maps raw Jira JSON into clean **domain objects**.
+- The only layer allowed to know Jira's raw field structure.
+- Functions: `extractItem(issue, envFields)`, `extractStoryStatus(issue)`, `extractItemScope(issue)`, `extractItemForLCT(issue, agileTeamField)`, `chunk(arr, n)`.
+- All functions are **pure** (no side effects, no I/O).
+
+### `transformers/` — Transform
+- Pure calculations and data shaping.
+- No I/O, no Markdown, no rendering of any kind.
+- Functions: `isOverdue(item)`, `getDaysOverdue(item)`, `groupByStatusOrdered(items, workflow)`, `getSpecialCategory(...)`, `buildCountMap(items, getParentKey, checkDone)`, `filterOverdue(items)`, `calculateLeadTime(epics, workflow)`, `calculateExpectedPct(item)`, `getRygStatus(item, actualPct, expectedPct, days, counts)`.
+- `getRygStatus` rules: Done → 🔵. Not Started (To Do + no done children + not overdue) → 🔘 / 🔘 🚩⚠️. Otherwise the badge is the **worst of two independent signals** — (1) Overdue signal: 1–14d → 🟢, 15–28d → 🟡, 29+d → 🔴; (2) Completion signal: delta ≤ 20% of expectedPct → 🟢, ≤ 50% → 🟡, > 50% → 🔴. A number suffix (e.g. 30d) is appended when overdue. Overdue backlog items fall through to RYG instead of defaulting to gray.
+- All functions are **stateless** — safe at any concurrency level.
+
+### `formatters/` — Load
+- Converts transformed domain data into the final output format.
+- No I/O, no calculation — only presentation.
+- **`markdown-formatter.js`** — Domain data → Markdown (chat output).
+  - `EPIC_RYG_LEGEND` — exported blockquote constant; inserted once per report below the Epics heading as a status key.
+  - `formatProgress(done, total)`, `formatStatusTable(grouped)`, `formatStoryStatusTable(items, workflow)`, `formatInitiativeTable(items, baseUrl, countMap)`.
+  - `formatEpicList(epics, baseUrl, workflow, countMap)` — all teams joined into one string (chat output).
+  - `formatEpicsByTeam(epics, baseUrl, workflow, countMap)` — one `{ team, markdown }` object per team (Confluence export / analysis).
+  - Both epic formatters include the team epic count in the `### 🏷️ Team _(N epics)_` heading.
+  - `dateDeltaCell(baseDate, actualDate, baseLabel, actualLabel)` — internal helper; produces a two-row cell with bold labels (`**Planned**`, `**Expected**`, `**Actual**`) separated by the `↵` sentinel.
+  - `formatInnovationVelocityTable(teams, teamStats)`.
+  - `formatInnovationVelocityByTeam(allTeams, teamStats, lctReady, velocityOnly)` — combined velocity + per-team bullet blocks. Pass `velocityOnly=true` to emit only the velocity legend, overall summary, and velocity table (no Lead/Cycle Time tables); used in the chat analysis resolver when the LCT section is rendered separately.
+  - `formatLCTSection(allTeams, teamStats, lctReady, renderHeading)` — standalone Lead and Cycle Time section. Renders its own legend (Lead Time and Cycle Time definitions) at the top. When `renderHeading=true` (chat/default) emits a `### H3` heading and team sub-headings as `#### H4`; when `renderHeading=false` (Confluence, caller owns `## H2`) emits team sub-headings as `### H3` so Confluence TOC numbering is correct (5.1, 5.2… not 5.0.1, 5.0.2…).
+- **`confluence-formatter.js`** — Markdown → Confluence Storage Format (XHTML). Pure and stateless.
+  - `buildTocMacro(minLevel, maxLevel)` — native Confluence TOC macro prepended to every exported page.
+  - `buildAnchorMacro(anchorName)` — named anchor macro (default `"top"`) for `[⬆ Back to top](#top)` links.
+  - `markdownToStorage(markdown)` — handles headings, blockquotes (consecutive `> ` lines merged into one `<blockquote>`), unordered lists, `<hr/>`, tables, and inline formatting.
+  - `renderTable(headers, bodyRows)` — full-width Confluence table with variable colspan widths. `WIDE_HEADERS = { 'Start', 'Due' }` gives those columns (and always the first/Epic column) `colspan="2"` so they render at 2× the width of other columns. Virtual column count adjusts automatically.
+  - `STATUS_BG` — map of exact Jira status names → background hex colours (Backlog = gray, Development = blue, Deployed to Production / Released = green).
+  - `tdStyle(content)` — returns both `data-highlight-colour` (Confluence-native) and `style="background-color"` attributes for status cells, so colouring survives the Cloud API sanitiser.
+  - `cellToHtml(content)` — splits on `↵` sentinel and wraps each part in its own `<p>` tag for multi-line cells.
+- Only these files change when the output format changes — resolvers are untouched.
+
+### `resolvers/` — Orchestrators
+- Receive the Rovo event, call the ETL pipeline, return the structured response.
+- Must **not** contain business logic, calculations, or Markdown string building.
+- Pattern: `receive → extract → transform → format → return`.
+- **`confluence-export-resolver.js`** — accepts `portfolioKeys` (one or comma-separated), resolves destination (folder / parent page / space root), calls `buildReportForKey` per key. Scope-aware: detects Objective / Initiative / Epic via `extractItemScope` and renders only the relevant sections. Reads pre-computed LCT session from Forge Storage (written by `lead-time-resolver`). Each report includes a `_Created at: YYYY-MM-DD HH:MM_` metadata line (timezone: `REPORT_TIMEZONE`) and a `[⬆ Back to top](#top)` link. The page title date is timezone-aware (BRT). Accepts optional `titleSuffix` — **mandatory when 2+ individual reports share the same destination** to prevent page overwrites (agent uses the portfolio key or objective name as suffix). Assembled page is prefixed with anchor + TOC macro, then upserted (Update → Move → Create). Returns `pageUrl`, `counts`, `wasMoved`, `wasUpdated`, `resolvedFolderId`.
+- **`prepare-export-resolver.js`** — ETL step 1. Scope-aware: handles Objective (Layer 1–3), Initiative (direct-child epics + stories), and Epic (stories under epic) key types. Accepts `portfolioKeys` (comma-separated) for multi-key runs — saves one independent session per key (`export_session:<accountId>:<key>`). Sessions are combined at query time; no composite session is stored. Persists `phase: 'layers_1_4'` and `detectedScope` field.
+- **`lead-time-resolver.js`** — ETL step 2. Reads session written by `prepare-export-resolver`, runs a combined Epic + Story changelog JQL query batched across multiple Forge invocations (returning `PARTIAL` until done). Finalises `lctByTeam`, `velocityByTeam`, `overallVelocity` and updates session to `phase: 'complete'`.
+- **`check-cache-resolver.js`** — Probes the session for a given key. Detects scope via `extractItemScope`. Returns `hasCachedData`, `phase`, `detectedScope`, `parentKey`, and `cachedAt` (formatted in `REPORT_TIMEZONE`). Treats sessions written by old code (no `detectedScope` field + empty `allTeams`) as stale.
+- **`creator-resolver.js`** — Static data only; no ETL pipeline. Exports `getAgentInfo` which returns the `GUSTIEL_CARD` constant. Called by the single `get-agent-info` action for both "Who are you?" and "Who is your creator?" questions. The card contains two image URL fields: `avatarImageUrl` (Gustiel's avatar shown inline at the top of the identity card) and `builtByImageUrl` (creator photo shown inline on the Built by line). Images are rendered as standard markdown `![alt](url)` — see **Image Rendering** section below.
+
+### `config/constants.js` — Configuration
+- Single source of truth for version, workflow status dicts, and field IDs.
+- Workflow statuses are **dicts** (not arrays): `{ order, category, specialCategory }`.
+- To change a status behaviour: edit the dict here only. No resolver logic to touch.
+- `TEAMS_PER_BATCH = 4` — controls how many teams auto-chain per user "next" before a mandatory pause (see Pagination Model below).
+
+---
+
+## Rules for New Features
+
+1. **New data from Jira?** → Add a function to `extractors/jira-extractor.js`.
+2. **New calculation or grouping?** → Add a function to the relevant `transformers/` file.
+3. **New output section or table?** → Add a function to `formatters/markdown-formatter.js`.
+4. **New Rovo action?** → Add a resolver that calls the three layers above. No logic inside.
+5. **New workflow status?** → Edit `config/constants.js` only. Zero other changes needed.
+6. **Never duplicate logic** — if a second resolver needs the same extraction, transformation, or formatting, it imports from the existing layer file.
+
+---
+
+## Data Flow (Portfolio Report)
+
+```
+Rovo Event  (teamPage param drives phase)
+    │
+    ▼
+portfolio-report-resolver.js   ← entry/exit only
+    │
+    ├─ EXTRACT — Layer 1 (Objective + Initiatives) ──────────
+    │   searchJira()              ← services/jira-api-service.js
+    │   extractItem()             ← extractors/jira-extractor.js
+    │
+    ├─ EXTRACT — Layer 2 (Epics, optional QP filter) ────────
+    │   searchJira()              ← services/jira-api-service.js
+    │   extractItem()             ← extractors/jira-extractor.js
+    │
+    ├─ EXTRACT — Layer 3 (Story counts, chunked 50) ─────────
+    │   searchJira()              ← services/jira-api-service.js
+    │   extractStoryStatus()      ← extractors/jira-extractor.js
+    │   chunk()                   ← extractors/jira-extractor.js
+    │
+    ├─ EXTRACT — Layer 4 (Epic changelogs → lead time) ──────
+    │   searchJira(..., ['changelog']) ← services/jira-api-service.js
+    │   extractEpicForLeadTime()  ← extractors/jira-extractor.js
+    │
+    ├─ TRANSFORM ────────────────────────────────────────────
+    │   buildCountMap()           ← transformers/portfolio-transformer.js
+    │   groupByStatusOrdered()    ← transformers/portfolio-transformer.js
+    │   filterOverdue()           ← transformers/portfolio-transformer.js
+    │   calculateLeadTime()       ← transformers/portfolio-transformer.js
+    │
+    ├─ LOAD ─────────────────────────────────────────────────
+    │   formatProgress()              ← formatters/markdown-formatter.js
+    │   formatStatusTable()           ← formatters/markdown-formatter.js
+    │   formatStoryStatusTable()      ← formatters/markdown-formatter.js
+    │   formatInitiativeTable()       ← formatters/markdown-formatter.js
+    │   formatEpicsByTeam()           ← formatters/markdown-formatter.js
+    │   formatInnovationVelocityTable()← formatters/markdown-formatter.js
+    │
+    ▼
+Structured response { status, summary, pagination, team_* fields, ... }
+```
+
+---
+
+## Pagination Model (Two-Phase Design)
+
+Rovo's LLM output token limit (~4K per turn) prevents returning all team data in one response. The resolver solves this with a two-phase, server-controlled pagination model.
+
+### Phase 1 — Summary (`teamPage = 0`)
+Returns the portfolio summary, initiative table, and counts. No team fields. Gives the LLM a "breathing room" turn before the heavier team breakdown begins.
+
+### Phase 2 — Team pages (`teamPage ≥ 1`)
+Returns **exactly one team** per call. The server decides what the LLM must do next via a single `pagination.nextAction` field — no boolean logic required from the LLM.
+
+| `nextAction` | Condition | LLM behaviour |
+|---|---|---|
+| `"AUTO_CONTINUE"` | Within a batch of 4 (`teamPage % 4 ≠ 0`) | Call again immediately — no text between table and call |
+| `"PAUSE"` | Batch boundary (`teamPage % 4 === 0`) and more teams remain | Post the batch-pause message, wait for user "next" |
+| `"COMPLETE"` | No more teams | Post the completion message |
+
+**Why batch at 4?** Each team table costs ~300–500 LLM output tokens. Four teams ≈ 2,000 tokens — safely under the ~4K ceiling. Batching at the server prevents the LLM from chaining indefinitely and hitting a silent mid-report truncation.
+
+**Key pagination fields returned:**
+
+| Field | Purpose |
+|---|---|
+| `nextAction` | The only field the LLM reads to decide its next move |
+| `nextTeamPage` | The exact integer to pass as `teamPage` in the next call |
+| `teamNumber` | Display only — which team was just returned. **Never used as a call parameter** |
+| `batchStartTeam` | First team number of the current batch — for the pause message |
+| `totalTeams` | Total teams in this objective — for progress display |
+
+---
+
+## Layered Crawl (Forge 25-second limit)
+
+The portfolio analysis fetches in three sequential layers to avoid large parallel fan-outs:
+
+| Layer | What | JQL strategy | Scope |
+|---|---|---|---|
+| 1 | Portfolio root + direct children | `key = X OR parent = X` | Objective / Initiative / Epic |
+| 2 | Epics (optional QP filter) | `parent in (initiativeKeys...)` | Objective only |
+| 3 | Story counts | `parent in (epicKeys...)` chunked in groups of 50 | All scopes |
+| 4 (async) | Epic + Story changelogs for LCT | `hierarchyLevel in (0,1) AND agileTeam in (...)` | All scopes |
+
+Layer 3 uses `chunk()` to keep JQL `IN` clauses within character limits.
+Layer 4 runs in a separate Forge invocation chain (`lead-time-resolver`) to avoid the 25-second execution limit.
+
+---
+
+## Image Rendering in Rovo Chat
+
+Rovo's content security policy (CSP) aggressively blocks most external image embeds. The following table summarises what works and what doesn't:
+
+| Method | Result | Notes |
+|---|---|---|
+| `![alt](external-url)` in prompt template | ✅ Works (inconsistent) | Rovo renders imgur URLs inline when the LLM outputs them as conversational text via the prompt template |
+| `![alt](url)` returned from action data | ❌ Blocked | Rovo converts to a hyperlink or "Preview unavailable" |
+| Raw URL from action data | ❌ Blocked | Rovo auto-titles it as a link |
+| `manifest.yml` `icon` field | ✅ Guaranteed | Shown as the agent's avatar bubble on every message |
+
+### How Gustiel handles images
+
+**Agent avatar (`avatarImageUrl`)** — rendered inline at the top of the identity card:
+```
+![Gustiel]({agent.avatarImageUrl})
+```
+
+**Creator photo (`builtByImageUrl`)** — rendered inline on the Built by line:
+```
+**Built by:** {agent.builtBy} · {agent.builtByEmail} · ![Gustiel]({agent.builtByImageUrl})
+```
+
+Both URLs live in `GUSTIEL_CARD` inside `src/resolvers/creator-resolver.js`. The prompt template in `prompts/main_prompt.md` instructs the LLM to output them using `![alt](url)` markdown syntax, which Rovo renders inline.
+
+**Manifest icon** — the agent's avatar in the Rovo UI is set via `manifest.yml`:
+```yaml
+modules:
+  rovo:agent:
+    - key: portfolio-analyst-agent
+      icon: resource:agent-assets;icons/avatar.png
+```
+The image file is bundled at `assets/icons/avatar.png` and declared under `resources` as `agent-assets`. This is the only image Rovo is guaranteed to always display.
+
+### Rule: image URLs belong in `creator-resolver.js`
+Never hardcode image URLs directly in the prompt. Keep them in `GUSTIEL_CARD` so they can be updated in one place. The prompt references them via `{agent.avatarImageUrl}` and `{agent.builtByImageUrl}`.

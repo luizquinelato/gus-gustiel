@@ -1,0 +1,412 @@
+modules:
+  rovo:agent:
+    - key: portfolio-analyst-agent
+      name: Gustiel (Portfolio Sentinel)
+      description: >
+        AI assistant focused on Portfolio Analysis for Jira.
+      icon: resource:agent-assets;icons/gustiel-face-small.png
+      prompt: resource:agent-prompts;main_prompt.md
+      conversationStarters:
+        - Who are you?
+        - Help - show me all your skills
+        - What is your version?
+      actions:
+        - get-agent-version
+        - get-agent-info
+        - get-system-info
+        - create-confluence-folder
+        - check-report-cache
+        - prepare-portfolio-export
+        - calculate-lead-time-data
+        - calculate-sprint-data
+        - export-to-confluence
+        - wipe-global-storage
+        - wipe-user-storage
+        - add-admin
+        - remove-admin
+        - list-admins
+        - clear-admin-registry
+        - get-my-account-id
+        - analyze-portfolio-chat
+
+  function:
+    - key: getAgentVersion
+      handler: index.getAgentVersion
+    - key: getAgentInfo
+      handler: index.getAgentInfo
+    - key: getSystemInfo
+      handler: index.getSystemInfo
+    - key: exportToConfluence
+      handler: index.exportToConfluence
+    - key: createConfluenceFolder
+      handler: index.createConfluenceFolder
+    - key: checkReportCache
+      handler: index.checkReportCache
+    - key: preparePortfolioExport
+      handler: index.preparePortfolioExport
+    - key: calculateLeadTimeData
+      handler: index.calculateLeadTimeData
+    - key: calculateSprintData
+      handler: index.calculateSprintData
+    - key: wipeGlobalStorage
+      handler: index.wipeGlobalStorage
+    - key: wipeUserStorage
+      handler: index.wipeUserStorage
+    - key: addAdmin
+      handler: index.addAdmin
+    - key: removeAdmin
+      handler: index.removeAdmin
+    - key: listAdmins
+      handler: index.listAdmins
+    - key: clearAdminRegistry
+      handler: index.clearAdminRegistry
+    - key: getMyAccountId
+      handler: index.getMyAccountId
+    - key: chatAnalysisSection
+      handler: index.chatAnalysisSection
+
+  action:
+    - key: get-agent-version
+      function: getAgentVersion
+      name: Get Agent Version
+      actionVerb: GET
+      description: Returns the current version of the agent.
+
+    - key: get-agent-info
+      function: getAgentInfo
+      name: Get Agent Info
+      actionVerb: GET
+      description: Returns information about who Gustiel is — purpose, skills, and avatar. Use when the user asks "who are you?", "what are you?", or "tell me about yourself".
+
+    - key: get-system-info
+      function: getSystemInfo
+      name: Get System Info
+      actionVerb: GET
+      description: Returns the connected Jira environment (Sandbox or Production) and
+        current agent version.
+
+    - key: export-to-confluence
+      function: exportToConfluence
+      name: Export Portfolio to Confluence
+      actionVerb: CREATE
+      description: >-
+        Exports one or more Jira portfolio reports to Confluence. One key = one
+        page; comma-separated keys = combined page. Use ONLY when the user
+        explicitly chooses Confluence. Returns the URL of the created page.
+      inputs:
+        portfolioKeys:
+          title: Portfolio Keys
+          type: string
+          description: "One or more Jira Objective keys, comma-separated (e.g. WX-1145 or WX-1145,WX-1146). Single key = one report. Multiple keys = combined page (merged or isolated, see mode)."
+          required: true
+        mode:
+          title: Multi-Key Mode
+          type: string
+          description: >-
+            Required when portfolioKeys contains more than one key.
+            'merged' — pool all items into a single unified report with an Objective column.
+            'isolated' — generate a separate complete report per key, all on the same page with a divider between them.
+          required: false
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: The Confluence space key where the page will be created (e.g. PROJ).
+          required: true
+        quarters:
+          title: Quarter Filter
+          type: string
+          description: >
+            Optional. One or more QP Planning Sessions values, comma-separated
+            (e.g. "2026 Q1" or "2025 Q4,2026 Q1"). Same filter logic as
+            report-portfolio.
+          required: false
+        parentPath:
+          title: Parent Page Path
+          type: string
+          description: >
+            Optional. Slash-separated hierarchy of standard Confluence PAGES
+            under which the report will be nested (e.g. "Reports/2026"). Any
+            page that does not exist will be created as a blank page.
+            Do NOT use for native Confluence folders — use folderId instead.
+          required: false
+        folderId:
+          title: Folder ID
+          type: string
+          description: >
+            Optional. The numeric ID of an existing Confluence native folder.
+            Extract it from the folder URL — the number that appears after
+            /folder/ (e.g. "52592641" from ".../folder/52592641"). When
+            provided, the report page is created directly inside this folder.
+            Takes precedence over parentPath and newFolderTitle.
+          required: false
+        newFolderTitle:
+          title: New Folder Title
+          type: string
+          description: >
+            Optional. If provided, a new Confluence folder with this title is
+            created at the space root, and the report page is placed inside it.
+            Only used when folderId is not provided.
+          required: false
+        titleSuffix:
+          title: Title Suffix
+          type: string
+          description: >
+            Optional. Text appended to the page title after the standard suffix
+            " - Gustiel Portfolio Report". Use this when creating a copy of an
+            existing report so the new page gets a unique title (e.g. " - Copy").
+            Leave empty for normal exports and moves.
+          required: false
+
+    - key: create-confluence-folder
+      function: createConfluenceFolder
+      name: Create Confluence Folder
+      actionVerb: CREATE
+      description: >-
+        Creates a Confluence folder in the given space. Returns folderId and
+        status (CREATED or EXISTS). Always call this before export-to-confluence
+        when a new folder is needed, then pass the returned folderId to exports.
+      inputs:
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: The Confluence space key where the folder will be created (e.g. GUSTIEL).
+          required: true
+        folderTitle:
+          title: Folder Title
+          type: string
+          description: The display name for the new folder (e.g. "2026-03-30 Portfolio Reports").
+          required: true
+
+    - key: check-report-cache
+      function: checkReportCache
+      name: Check Report Cache
+      actionVerb: GET
+      description: >-
+        Checks per-user storage for an export session. Returns hasCachedData,
+        phase (layers_1_4 or complete), cachedAt, teamCount, initiativeCount,
+        epicCount. Call before prepare-portfolio-export to let the user choose
+        cached vs fresh extraction.
+      inputs:
+        portfolioKey:
+          title: Portfolio Key
+          type: string
+          description: The Jira key of the Objective to check (e.g. WX-1145).
+          required: true
+
+    - key: prepare-portfolio-export
+      function: preparePortfolioExport
+      name: Prepare Portfolio Export
+      actionVerb: GET
+      description: >-
+        Step 1 of the fresh-extraction Confluence flow. Runs Layers 1-3,
+        extracts agile teams, saves one session per key to per-user storage
+        (phase=layers_1_4). Call BEFORE calculate-lead-time-data. Accepts
+        multiple keys via portfolioKeys.
+      inputs:
+        portfolioKey:
+          title: Portfolio Key
+          type: string
+          description: >-
+            Single Jira key to extract (e.g. WX-1145). For multiple keys use
+            portfolioKeys instead.
+          required: true
+        portfolioKeys:
+          title: Portfolio Keys (Multi-Key)
+          type: string
+          description: >-
+            Comma-separated Jira keys (e.g. "WX-1145,WX-1146"). Each key gets
+            its own independent session saved. All keys must be the same
+            hierarchy level. When set, takes precedence over portfolioKey.
+          required: false
+        quarters:
+          title: Quarter Filter
+          type: string
+          description: >
+            Optional. One or more QP Planning Sessions values, comma-separated
+            (e.g. "2026 Q1" or "2025 Q4,2026 Q1").
+          required: false
+
+    - key: calculate-lead-time-data
+      function: calculateLeadTimeData
+      name: Calculate Lead Time Data
+      actionVerb: GET
+      description: >-
+        Step 2 of the fresh-extraction Confluence flow. Reads the session from
+        prepare-portfolio-export, runs the Layer 5 story changelog query for
+        Lead/Cycle Time per team, and updates per-user storage to
+        phase=complete. Call AFTER prepare-portfolio-export.
+      inputs:
+        portfolioKey:
+          title: Portfolio Key
+          type: string
+          description: The Jira key of the Objective (e.g. WX-1145).
+          required: true
+
+    - key: calculate-sprint-data
+      function: calculateSprintData
+      name: Calculate Sprint Data
+      actionVerb: GET
+      description: "Step 3 ETL: per team, finds the Jira board, fetches last 6 closed sprints, and calls GreenHopper for velocity, say/do, and rolled-over SP. PARTIAL -> SUCCESS pattern. Run after calculate-lead-time-data."
+      inputs:
+        portfolioKey:
+          title: Portfolio Key
+          type: string
+          description: The Jira key used in the preceding pipeline steps (e.g. WX-1145).
+          required: true
+
+    - key: wipe-global-storage
+      function: wipeGlobalStorage
+      name: Wipe Global Storage
+      actionVerb: DELETE
+      description: >-
+        Admin-only maintenance action. Deletes ALL storage entries written by
+        this app across all users. Restricted to the Gustiel administrator.
+        Any other caller receives an access-denied error.
+      inputs:
+        confirm:
+          title: Confirmation
+          type: string
+          description: >-
+            Must be set to 'YES' to confirm the global wipe. Any other value
+            will be rejected.
+          required: true
+
+    - key: wipe-user-storage
+      function: wipeUserStorage
+      name: Wipe My Storage
+      actionVerb: DELETE
+      description: >-
+        Clears the requesting user's own cached session data (all
+        export_session entries). Use to force a fresh extraction on the next
+        export or analysis run.
+      inputs:
+        confirm:
+          title: Confirmation
+          type: string
+          description: Must be set to 'YES' to confirm clearing your storage.
+          required: true
+
+    - key: add-admin
+      function: addAdmin
+      name: Add Admin
+      actionVerb: CREATE
+      description: >-
+        Super-admin only. Adds an Atlassian accountId to the dynamic admin
+        registry, granting them access to global admin skills.
+      inputs:
+        adminAccountId:
+          title: Admin Account ID
+          type: string
+          description: The Atlassian accountId to grant admin access to.
+          required: true
+
+    - key: remove-admin
+      function: removeAdmin
+      name: Remove Admin
+      actionVerb: DELETE
+      description: >-
+        Super-admin only. Removes an Atlassian accountId from the dynamic
+        admin registry, revoking their admin access.
+      inputs:
+        adminAccountId:
+          title: Admin Account ID
+          type: string
+          description: The Atlassian accountId to revoke admin access from.
+          required: true
+
+    - key: list-admins
+      function: listAdmins
+      name: List Admins
+      actionVerb: GET
+      description: >-
+        Any admin. Lists the super-admin and all dynamic admins with their
+        display name and email address.
+      inputs:
+        confirm:
+          title: Confirmation
+          type: string
+          description: Must be set to 'YES'.
+          required: true
+
+    - key: clear-admin-registry
+      function: clearAdminRegistry
+      name: Clear Admin Registry
+      actionVerb: DELETE
+      description: >-
+        Any admin. Resets the dynamic admin registry to empty. The hardcoded
+        super-admin is unaffected. Requires confirm = 'YES'.
+      inputs:
+        confirm:
+          title: Confirmation
+          type: string
+          description: Must be set to 'YES' to confirm resetting the admin registry.
+          required: true
+
+    - key: get-my-account-id
+      function: getMyAccountId
+      name: Get My Account ID
+      actionVerb: GET
+      description: >-
+        Debug utility. Returns the Forge runtime accountId for the current
+        user. Use to verify the accountId seen at runtime matches constants.
+      inputs:
+        confirm:
+          title: Confirmation
+          type: string
+          description: Must be set to 'YES'.
+          required: true
+
+    - key: analyze-portfolio-chat
+      function: chatAnalysisSection
+      name: Analyze Portfolio in Chat
+      actionVerb: GET
+      description: >-
+        Delivers one paginated section of the portfolio analysis in chat.
+        Reads LCT, velocity, and story data from the per-user session cache.
+        Never re-runs extraction. Call once per NEXT confirmation.
+        Sections: summary, epic_teams, velocity_lct.
+      inputs:
+        portfolioKey:
+          title: Portfolio Key
+          type: string
+          description: The Jira key of the Objective, Initiative, or Epic to analyze (e.g. WX-1145).
+          required: true
+        section:
+          title: Section
+          type: string
+          description: >-
+            Which section to deliver: "summary" (first call), "epic_teams"
+            (epics by team, paginated), or "velocity_lct" (velocity + LCT,
+            paginated). Follow nextSection from the previous response.
+          required: false
+        teamOffset:
+          title: Team Offset
+          type: string
+          description: >-
+            Zero-based index of the first team to include in this batch.
+            Use 0 for the first call of a section; use nextTeamOffset from
+            the previous response for subsequent NEXT calls.
+          required: false
+
+
+resources:
+  - key: agent-prompts
+    path: prompts
+  - key: agent-assets
+    path: assets
+
+app:
+  runtime:
+    name: nodejs22.x
+  id: ari:cloud:ecosystem::app/8fc4fdc1-9aba-49c1-b026-8e712124ea6c
+
+permissions:
+  scopes:
+    - read:jira-work
+    - read:jira-user
+    - storage:app
+    - write:page:confluence
+    - read:page:confluence
+    - read:space:confluence
+    - read:folder:confluence
+    - write:folder:confluence

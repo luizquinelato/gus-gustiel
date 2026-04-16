@@ -1,0 +1,20 @@
+{
+  "name": "gus-jira-portfolio-analyst",
+  "version": "1.0.0",
+  "description": "Gustiel Portfolio Analyst - Focused Jira Forge Rovo Agent for Portfolio Analysis",
+  "main": "src/index.js",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "lint": "eslint src/**/*"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "eslint-plugin-react-hooks": "^4.6.0"
+  },
+  "dependencies": {
+    "@forge/api": "^6.4.0",
+    "@forge/resolver": "1.7.1"
+  }
+}
+
