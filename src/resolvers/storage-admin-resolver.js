@@ -147,10 +147,16 @@ function summarizeStorageValue(key, value) {
         if (value.sprintsByTeam) {
             const st = Object.entries(value.sprintsByTeam);
             lines.push(`- **Sprint data:** ${st.length} teams`);
-            st.forEach(([t, d]) => lines.push(
-                d.error ? `  - ${t}: ⚠️ ${d.error}`
-                        : `  - ${t}: ${d.boardName || '?'} · ${d.sprints?.length ?? 0} sprint(s)`
-            ));
+            st.forEach(([t, d]) => {
+                if (d.error) { lines.push(`  - ${t}: ⚠️ ${d.error}`); return; }
+                lines.push(`  - **${t}** — ${d.boardName || '?'} · ${d.sprints?.length ?? 0} sprint(s)`);
+                (d.sprints || []).forEach(s => {
+                    if (s.error) { lines.push(`    - ${s.name}: ⚠️ ${s.error}`); return; }
+                    const pct  = s.sayDo != null ? `${Math.round(s.sayDo * 100)}%` : '—';
+                    const rag  = s.sayDoRag || '';
+                    lines.push(`    - ${s.name}: P:${s.planned ?? '—'} A:${s.added ?? '—'} R:${s.removed ?? '—'} ✅:${s.completed ?? '—'} 🔄:${s.rolledOver ?? '—'} ${rag}${pct}`);
+                });
+            });
         } else if (value.sprintTeamIndex !== undefined) {
             lines.push(`- **Sprint data:** ⏳ In progress (${value.sprintTeamIndex} teams done)`);
         } else {
@@ -169,11 +175,16 @@ function summarizeStorageValue(key, value) {
             lines.push(`- **Velocity:** ❌ not yet collected`);
         }
 
-        // LCT
+        // LCT — structure: lctByTeam[team].overall.leadTime.averageDays / .count
         if (value.lctByTeam) {
             const lTeams = Object.entries(value.lctByTeam);
             lines.push(`- **Lead/Cycle Time:** ${lTeams.length} teams`);
-            lTeams.forEach(([t, l]) => lines.push(`  - ${t}: lead ${l.avgLeadTimeDays ?? '—'}d · cycle ${l.avgCycleTimeDays ?? '—'}d · ${l.count ?? 0} issues`));
+            lTeams.forEach(([t, l]) => {
+                const lead  = l.overall?.leadTime?.averageDays  ?? '—';
+                const cycle = l.overall?.cycleTime?.averageDays ?? '—';
+                const count = Math.max(l.overall?.leadTime?.count ?? 0, l.overall?.cycleTime?.count ?? 0);
+                lines.push(`  - ${t}: lead ${lead}d · cycle ${cycle}d · ${count} issues`);
+            });
         } else {
             lines.push(`- **Lead/Cycle Time:** ❌ not yet collected`);
         }
