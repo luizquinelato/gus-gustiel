@@ -120,10 +120,30 @@ function summarizeStorageValue(key, value) {
         const portfolioKey = key.split(':')[2] || '?';
         const lines = [`📦 **Session: ${portfolioKey}**`];
 
-        if (value.allTeams)            lines.push(`- **Teams (${value.allTeams.length}):** ${value.allTeams.join(', ')}`);
-        if (value.portfolioKey)        lines.push(`- **Portfolio key:** ${value.portfolioKey}`);
-        if (value.newestSprintIdByTeam) lines.push(`- **Board/sprint index:** ${Object.keys(value.newestSprintIdByTeam).length} team(s)`);
+        // Phase + timestamp
+        if (value.phase)     lines.push(`- **Phase:** \`${value.phase}\``);
+        if (value.timestamp) {
+            const saved = new Date(value.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' });
+            const ageMs  = Date.now() - value.timestamp;
+            const ageH   = Math.floor(ageMs / 3_600_000);
+            const ageM   = Math.floor((ageMs % 3_600_000) / 60_000);
+            const ageLbl = ageH > 0 ? `${ageH}h ${ageM}m ago` : `${ageM}m ago`;
+            lines.push(`- **Saved:** ${saved} EDT (${ageLbl}) ${ageMs > 86_400_000 ? '⚠️ LCT expired (>24h)' : '✅ LCT fresh'}`);
+        }
 
+        // Teams + portfolio key
+        if (value.allTeams)   lines.push(`- **Teams (${value.allTeams.length}):** ${value.allTeams.join(', ')}`);
+        if (value.portfolioKey) lines.push(`- **Portfolio key:** ${value.portfolioKey}`);
+
+        // Story counts
+        if (value.storyCount != null) {
+            const byStatus = value.storyStatusSummary
+                ? Object.entries(value.storyStatusSummary).map(([s, v]) => `${s}: ${v.count}`).join(' · ')
+                : null;
+            lines.push(`- **Stories:** ${value.storyCount}${byStatus ? ` (${byStatus})` : ''}`);
+        }
+
+        // Sprint data
         if (value.sprintsByTeam) {
             const st = Object.entries(value.sprintsByTeam);
             lines.push(`- **Sprint data:** ${st.length} teams`);
@@ -134,11 +154,35 @@ function summarizeStorageValue(key, value) {
         } else if (value.sprintTeamIndex !== undefined) {
             lines.push(`- **Sprint data:** ⏳ In progress (${value.sprintTeamIndex} teams done)`);
         } else {
-            lines.push(`- **Sprint data:** not yet collected`);
+            lines.push(`- **Sprint data:** ❌ not yet collected`);
         }
 
-        if (value.leadTimeByTeam)      lines.push(`- **Lead time data:** ${Object.keys(value.leadTimeByTeam).length} teams`);
-        if (value.sprintAcc)           lines.push(`- **Sprint accumulator (partial):** ${Object.keys(value.sprintAcc).length} teams buffered`);
+        // Board/sprint index
+        if (value.newestSprintIdByTeam) lines.push(`- **Board/sprint index:** ${Object.keys(value.newestSprintIdByTeam).length} team(s)`);
+
+        // Velocity
+        if (value.velocityByTeam) {
+            const vTeams = Object.entries(value.velocityByTeam);
+            lines.push(`- **Velocity (Innovation):** ${vTeams.length} teams`);
+            vTeams.forEach(([t, v]) => lines.push(`  - ${t}: ${v.averageDays != null ? `${v.averageDays}d avg` : '—'} · ${v.epicCount ?? 0} epics`));
+        } else {
+            lines.push(`- **Velocity:** ❌ not yet collected`);
+        }
+
+        // LCT
+        if (value.lctByTeam) {
+            const lTeams = Object.entries(value.lctByTeam);
+            lines.push(`- **Lead/Cycle Time:** ${lTeams.length} teams`);
+            lTeams.forEach(([t, l]) => lines.push(`  - ${t}: lead ${l.avgLeadTimeDays ?? '—'}d · cycle ${l.avgCycleTimeDays ?? '—'}d · ${l.count ?? 0} issues`));
+        } else {
+            lines.push(`- **Lead/Cycle Time:** ❌ not yet collected`);
+        }
+
+        // Overall velocity
+        if (value.overallVelocity) lines.push(`- **Overall velocity:** ${value.overallVelocity.averageDays}d avg · ${value.overallVelocity.epicCount} epics`);
+
+        // Partial sprint accumulator
+        if (value.sprintAcc) lines.push(`- **Sprint accumulator (partial):** ${Object.keys(value.sprintAcc).length} teams buffered`);
 
         return lines.join('\n');
     }
