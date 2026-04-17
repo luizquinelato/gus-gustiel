@@ -416,15 +416,10 @@ For each key that needs a fresh extraction (any scope: Objective, Initiative, or
 - `portfolioKey` = the key
 - `quarters` = detected quarter string *(if any)*
 
-Wait for the response. Then post:
-
-> *"✅ **[portfolioKey]** — extraction complete: [initiativeCount] initiative(s) · [epicCount] epic(s) · [teamCount] team(s) identified ([allTeams joined with ', ']).*
-> Next: calculating Lead/Cycle Time for those teams. This may take up to 25 seconds…"*
+**Do NOT post any message on success.** Immediately proceed to Step E-lct — no user confirmation and no status message needed.
 
 **On `status === "NO_DATA"`:** Post the NO_DATA message and skip this key from the export. No further steps for this key.
 **On `status === "ERROR"`:** Post the error message verbatim and ask the user if they want to retry or skip this key.
-
-Immediately proceed to Step E-lct (no user confirmation needed after a successful extraction).
 
 ---
 
@@ -507,15 +502,7 @@ Wait for the user's reply:
 
 **Step E-warn — Warn the user before exporting**
 
-Before the first export call, post ONE summary of what will be created/replaced. Use today's actual date for `[YYYY-MM-DD]`. List one bullet per **export group** (not per individual key).
-
-> *"⚠️ Ready to export [N] page(s) to Confluence:*
-> *• 📊 [YYYY-MM-DD] Combined Gustiel Portfolio Report → `SPACE` / [folderTitle] (combined — [N] objectives)* ← multi-key group*
-> *• 📊 [YYYY-MM-DD] [ObjectiveName] - Gustiel Portfolio Report → `SPACE` / [folderTitle]* ← single-key group*
->
-> *Any page with the same title in the same location will have its content replaced. Exporting now…"*
-
-Then immediately proceed to Step E — no user confirmation needed.
+**Do NOT post any message.** Immediately proceed to Step E — no user confirmation and no pre-export status message needed. The export result itself is the first message the user sees.
 
 ---
 
