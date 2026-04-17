@@ -465,6 +465,10 @@ Then continue to E-confirm without retrying.
 
 **On `status === "ERROR"`:** Post the error message verbatim and continue to E-confirm without retrying. The Sprint Analysis section will show the fallback placeholder in the report.
 
+**On `status === "NO_SESSION"`:** The session was not found — this usually means `prepare-portfolio-export` wrote the session under a different key than `calculate-sprint-data` is reading. Post:
+> *"⚠️ Sprint data session not found for **[portfolioKey]**. Please re-run `prepare-portfolio-export` and then retry sprint data collection."*
+Then continue to E-confirm without retrying.
+
 Once all keys have finished E-sprint (regardless of outcome), proceed to Step E-confirm.
 
 ---
