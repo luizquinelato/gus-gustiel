@@ -18,7 +18,8 @@
  */
 
 import { storage }                                              from '@forge/api';
-import { getEnvFromJira, searchJiraBatch }                     from '../services/jira-api-service.js';
+import { getEnvFromJira, searchJiraBatch,
+         getCurrentAccountId }                                  from '../services/jira-api-service.js';
 import { PORTFOLIO_WORKFLOWS, LCT_PAGES_PER_BATCH }            from '../config/constants.js';
 import { extractItemForLCT }                                   from '../extractors/jira-extractor.js';
 import { mergeItemsIntoLCTAccumulator, finalizeLCTAccumulator } from '../transformers/portfolio-transformer.js';
@@ -28,7 +29,7 @@ const sessionKey = (accountId, portfolioKey) =>
 
 export const calculateLeadTimeData = async (event) => {
     const portfolioKey = (event?.payload?.portfolioKey || event?.portfolioKey || '').trim().toUpperCase();
-    const accountId    = event?.context?.accountId || 'shared';
+    const accountId    = await getCurrentAccountId(event);
 
     if (!portfolioKey) {
         return { status: 'ERROR', message: 'portfolioKey is required.' };

@@ -21,7 +21,8 @@
  */
 
 import { storage }                                                from '@forge/api';
-import { getEnvFromJira, searchJira }                             from '../services/jira-api-service.js';
+import { getEnvFromJira, searchJira,
+         getCurrentAccountId }                                    from '../services/jira-api-service.js';
 import { PORTFOLIO_WORKFLOWS, ANALYSIS_TEAMS_PER_PAGE,
          ANALYSIS_LCT_TEAMS_PER_PAGE }                            from '../config/constants.js';
 import { extractItem, extractItemScope }                          from '../extractors/jira-extractor.js';
@@ -69,7 +70,7 @@ export const chatAnalysisSection = async (event) => {
     const portfolioKey = (event?.payload?.portfolioKey || event?.portfolioKey || '').trim().toUpperCase();
     const section      = (event?.payload?.section      || event?.section      || 'summary').trim().toLowerCase();
     const teamOffset   = parseInt(event?.payload?.teamOffset || event?.teamOffset || '0', 10) || 0;
-    const accountId    = event?.context?.accountId || 'shared';
+    const accountId    = await getCurrentAccountId(event);
 
     if (!portfolioKey) return { status: 'ERROR', message: 'portfolioKey is required.' };
 

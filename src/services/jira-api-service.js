@@ -36,6 +36,26 @@ export async function getEnvFromJira() {
 }
 
 /**
+ * Resolve the current user's accountId.
+ * Tries event.context first (available in some Forge module types),
+ * then falls back to the Jira /myself API (always reliable in Rovo actions).
+ *
+ * @param {object} [event] - Forge event object (optional)
+ * @returns {Promise<string>} accountId, or 'shared' as last resort
+ */
+export async function getCurrentAccountId(event) {
+    const fromContext = event?.context?.accountId || null;
+    if (fromContext) return fromContext;
+    try {
+        const res  = await asUser().requestJira(route`/rest/api/3/myself`, { headers: { Accept: 'application/json' } });
+        const data = await res.json();
+        return data.accountId || 'shared';
+    } catch (_) {
+        return 'shared';
+    }
+}
+
+/**
  * Fetch the email address of the requesting Jira user.
  *
  * Strategy (two attempts, first win):

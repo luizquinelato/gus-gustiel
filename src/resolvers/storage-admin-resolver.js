@@ -20,29 +20,9 @@
  *   • isAdmin()              — true if accountId === SUPER_ADMIN or is in registry.
  */
 
-import api, { route, storage, startsWith } from '@forge/api';
+import { storage, startsWith } from '@forge/api';
 import { SUPER_ADMIN_ACCOUNT_ID, ADMIN_REGISTRY_KEY } from '../config/constants.js';
-
-// ── User identity ─────────────────────────────────────────────────────────────
-
-/**
- * Resolve the current user's accountId.
- * Tries event.context first (available in some Forge module types),
- * then falls back to the Jira /myself API (always reliable in Rovo actions).
- */
-async function getCurrentAccountId(event) {
-    const fromContext = event?.context?.accountId || null;
-    if (fromContext) return fromContext;
-    try {
-        const response = await api.asUser().requestJira(route`/rest/api/3/myself`, {
-            headers: { Accept: 'application/json' },
-        });
-        const data = await response.json();
-        return data.accountId || null;
-    } catch (_) {
-        return null;
-    }
-}
+import { getCurrentAccountId } from '../services/jira-api-service.js';
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 

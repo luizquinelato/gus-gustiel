@@ -15,7 +15,7 @@
  */
 
 import { storage }                                                                      from '@forge/api';
-import { getEnvFromJira, searchJira, getUserEmail }                                      from '../services/jira-api-service.js';
+import { getEnvFromJira, searchJira, getUserEmail, getCurrentAccountId }                  from '../services/jira-api-service.js';
 import { getSpaceByKey, findPageByTitle, createConfluencePage,
          updateConfluencePage, createFolder, findFolderByTitle,
          findOrCreatePageByPath }                                                   from '../services/confluence-api-service.js';
@@ -663,7 +663,7 @@ export const exportToConfluence = async (event) => {
     const titleSuffix      = (event?.payload?.titleSuffix    || event?.titleSuffix    || '').trim();
     const mode             = (event?.payload?.mode           || event?.mode           || 'merged').trim().toLowerCase();
     // Per-user session key — isolates each user's LCT cache from others'.
-    const accountId        = event?.context?.accountId || 'shared';
+    const accountId        = await getCurrentAccountId(event);
 
     if (!portfolioKeysRaw) return { status: 'ERROR', message: 'Please provide at least one portfolio key (e.g. WX-1145).' };
     if (!spaceKey)         return { status: 'ERROR', message: 'Please provide a Confluence space key (e.g. PROJ).' };

@@ -20,8 +20,8 @@
  */
 
 import { storage }                                          from '@forge/api';
-import { getBoardById,
-         getGreenHopperSprintReport }                       from '../services/jira-api-service.js';
+import { getBoardById, getGreenHopperSprintReport,
+         getCurrentAccountId }                              from '../services/jira-api-service.js';
 import { parseGreenHopperSprintReport }                     from '../transformers/portfolio-transformer.js';
 import { ANALYSIS_SPRINT_TEAMS_PER_BATCH }                  from '../config/constants.js';
 
@@ -30,7 +30,7 @@ const sessionKey = (accountId, portfolioKey) =>
 
 export const calculateSprintData = async (event) => {
     const portfolioKey = (event?.payload?.portfolioKey || event?.portfolioKey || '').trim().toUpperCase();
-    const accountId    = event?.context?.accountId || 'shared';
+    const accountId    = await getCurrentAccountId(event);
 
     if (!portfolioKey) {
         return { status: 'ERROR', message: 'portfolioKey is required.' };

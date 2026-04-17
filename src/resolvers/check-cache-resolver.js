@@ -14,7 +14,7 @@
 
 import { storage }                from '@forge/api';
 import { REPORT_TIMEZONE }       from '../config/constants.js';
-import { searchJira }            from '../services/jira-api-service.js';
+import { searchJira, getCurrentAccountId } from '../services/jira-api-service.js';
 import { extractItemScope }      from '../extractors/jira-extractor.js';
 
 const sessionKey = (accountId, portfolioKey) =>
@@ -22,7 +22,7 @@ const sessionKey = (accountId, portfolioKey) =>
 
 export const checkReportCache = async (event) => {
     const portfolioKey = (event?.payload?.portfolioKey || event?.portfolioKey || '').trim().toUpperCase();
-    const accountId    = event?.context?.accountId || 'shared';
+    const accountId    = await getCurrentAccountId(event);
 
     if (!portfolioKey) {
         return { status: 'ERROR', message: 'portfolioKey is required.' };

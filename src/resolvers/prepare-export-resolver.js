@@ -16,7 +16,8 @@
  */
 
 import { storage }                                        from '@forge/api';
-import { getEnvFromJira, searchJira }                     from '../services/jira-api-service.js';
+import { getEnvFromJira, searchJira,
+         getCurrentAccountId }                             from '../services/jira-api-service.js';
 import { PORTFOLIO_WORKFLOWS }                            from '../config/constants.js';
 import { extractItem, extractStoryStatus, chunk,
          extractItemScope }                               from '../extractors/jira-extractor.js';
@@ -87,7 +88,7 @@ export const preparePortfolioExport = async (event) => {
     const portfolioKeysRaw = (event?.payload?.portfolioKeys || event?.portfolioKeys || '').trim().toUpperCase();
     const portfolioKey     = (event?.payload?.portfolioKey  || event?.portfolioKey  || '').trim().toUpperCase();
     const quartersRaw      = (event?.payload?.quarters      || event?.quarters      || '').trim();
-    const accountId        = event?.context?.accountId || 'shared';
+    const accountId        = await getCurrentAccountId(event);
 
     const allKeys = portfolioKeysRaw
         ? portfolioKeysRaw.split(',').map(k => k.trim()).filter(Boolean)
