@@ -6,7 +6,7 @@
  */
 
 // --- VERSION TRACKING ---
-export const VERSION = "4.45.10";
+export const VERSION = "4.45.11";
 
 // --- ANALYSIS PAGINATION ---
 // Teams per NEXT page for the Epics-by-Team section (more data per team → smaller batches).
@@ -14,8 +14,9 @@ export const ANALYSIS_TEAMS_PER_PAGE = 7;
 // Teams per NEXT page for the LCT/Velocity section (less data per team → larger batches).
 export const ANALYSIS_LCT_TEAMS_PER_PAGE = 10;
 // Teams processed per Forge invocation for sprint analysis.
-// Lower than LCT because each team makes ~9 API calls (board lookup + sprint list + up to 6 GreenHopper calls).
-export const ANALYSIS_SPRINT_TEAMS_PER_BATCH = 3;
+// GreenHopper now uses asApp() (same speed as all other Agile calls), so batch size
+// can match LCT. Each team: 1 board lookup + 1 sprint list + up to 6 GreenHopper calls = ~8 calls.
+export const ANALYSIS_SPRINT_TEAMS_PER_BATCH = 6;
 // --- ADMIN ---
 // Immutable root of trust — never changes, never stored in dynamic registry.
 export const SUPER_ADMIN_ACCOUNT_ID = '641b50110e6828ab202643c3';
