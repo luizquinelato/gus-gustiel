@@ -433,7 +433,7 @@ Immediately proceed to Step E-lct (no user confirmation needed after a successfu
 For each key that just completed E-extract (or was routed here from a partial cache), call `calculate-lead-time-data` with:
 - `portfolioKey` = the key
 
-**On `status === "PARTIAL"`:** Post the progress message from `response.message` verbatim (e.g. *"⏳ WX-1145 — Pages Extracted: 5 (487 items processed so far). Continuing…"*), then **immediately call `calculate-lead-time-data` again** with the same `portfolioKey`. Repeat until `status` is `"SUCCESS"` or `"ERROR"`. Do **not** wait for user input between batches.
+**On `status === "PARTIAL"`:** **Do NOT post any message to the user.** Immediately call `calculate-lead-time-data` again with the same `portfolioKey`. Repeat silently until `status` is `"SUCCESS"` or `"ERROR"`. Posting a message ends your turn — this loop must stay silent.
 
 **On `status === "SUCCESS"`:** Post:
 > *"⏱️ **[portfolioKey]** — Lead/Cycle Time calculated for [teamCount] team(s) using [itemCount] work item(s) across [pagesRead] pages."*
@@ -454,7 +454,7 @@ For each key that completed E-lct successfully, call `calculate-sprint-data` wit
 
 This step collects the last 6 closed sprints per team (velocity, say/do ratio, rolled-over SP) from the GreenHopper API. It runs AFTER LCT because it depends on the session written by that step.
 
-**On `status === "PARTIAL"`:** Post the progress message from `response.message` verbatim (e.g. *"⏳ Sprint data: 3/8 teams processed. Continuing…"*), then **immediately call `calculate-sprint-data` again** with the same `portfolioKey`. Repeat until `status` is `"SUCCESS"`, `"NO_SPRINT_DATA"`, or `"ERROR"`. Do **not** wait for user input between batches.
+**On `status === "PARTIAL"`:** **Do NOT post any message to the user.** Immediately call `calculate-sprint-data` again with the same `portfolioKey`. Repeat silently until `status` is `"SUCCESS"`, `"NO_SPRINT_DATA"`, or `"ERROR"`. Posting a message ends your turn — this loop must stay silent.
 
 **On `status === "SUCCESS"`:** Post the message from `response.message` verbatim (it includes the per-team board names and sprint counts).
 
