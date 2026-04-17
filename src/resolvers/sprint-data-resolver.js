@@ -3,27 +3,24 @@
  *
  * For each agile team identified in the session, this resolver:
  *   1. Reads the pre-collected recentClosedSprints per team from the session (Step 1)
- *   2. Calls the GreenHopper sprint report API for each sprint (asUser, per-sprint)
+ *   2. Calls the GreenHopper sprint report API for each sprint (asApp, all teams in parallel)
  *   3. Uses parseGreenHopperSprintReport() to extract planned (estimateStatistic) and
  *      velocity/rolledOver/removed/added (currentEstimateStatistic)
  *   4. Returns data shaped for formatSprintSection()
  *
- * Uses the same PARTIAL → SUCCESS pattern as calculate-lead-time-data.
- * Processes ANALYSIS_SPRINT_TEAMS_PER_BATCH teams per Forge invocation to
- * stay well within the 25-second timeout.
+ * All teams are processed in a SINGLE invocation using Promise.all — no PARTIAL loop.
+ * With parallel calls, 12 teams × 7 API calls = ~84 concurrent requests complete in ~3s,
+ * well within Forge's 25-second timeout. This avoids the external-loop problem where
+ * posting a PARTIAL message to the user ends the agent's turn before it can call again.
  *
- * Resume token: session.sprintTeamIndex (int, 0 on first call)
- * Accumulator:  session.sprintAcc       (object, built up across PARTIAL calls)
- * Final output: session.sprintsByTeam   (written only on SUCCESS)
- *
- * Storage key: export_session:<accountId>:<portfolioKey>
+ * Final output: session.sprintsByTeam
+ * Storage key:  export_session:<accountId>:<portfolioKey>
  */
 
 import { storage }                                          from '@forge/api';
 import { getBoardById, getGreenHopperSprintReport,
          getCurrentAccountId }                              from '../services/jira-api-service.js';
 import { parseGreenHopperSprintReport }                     from '../transformers/portfolio-transformer.js';
-import { ANALYSIS_SPRINT_TEAMS_PER_BATCH }                  from '../config/constants.js';
 
 const sessionKey = (accountId, portfolioKey) =>
     `export_session:${accountId}:${portfolioKey}`;
@@ -84,30 +81,24 @@ export const calculateSprintData = async (event) => {
         };
     }
 
-    // ── Resume state ──────────────────────────────────────────────────────────
-    const sprintTeamIndex = session.sprintTeamIndex ?? 0;
-    const sprintAcc       = session.sprintAcc       ?? {};
-
-    // ── Process next batch of teams ───────────────────────────────────────────
-    const batch = teamsWithSprints.slice(sprintTeamIndex, sprintTeamIndex + ANALYSIS_SPRINT_TEAMS_PER_BATCH);
-
-    // Process all teams in the batch in parallel; sprints within each team also in parallel.
-    // This replaces ~36 sequential API calls with a few parallel waves, cutting execution
-    // time from ~14s to ~2-3s and staying well within Forge's action timeout.
-    await Promise.all(batch.map(async (team) => {
-        const newestSprint = newestSprintIdByTeam[team];
+    // ── EXTRACT — all teams in parallel, sprints within each team also in parallel ──
+    // No batching or PARTIAL needed: Promise.all across 12 teams × ~7 API calls each
+    // completes in ~3s, well within Forge's 25s limit.
+    const sprintsByTeam = {};
+    await Promise.all(teamsWithSprints.map(async (team) => {
+        const newestSprint  = newestSprintIdByTeam[team];
         try {
-            const boardId      = newestSprint.boardId;
+            const boardId       = newestSprint.boardId;
             const targetSprints = newestSprint.recentClosedSprints || [];
 
-            // 1. Resolve board name + all sprint reports in parallel
+            // Board name + all sprint reports fetched in one parallel wave
             const [boardMeta, ...reports] = await Promise.all([
                 getBoardById(boardId),
                 ...targetSprints.map(s => getGreenHopperSprintReport(boardId, s.id)),
             ]);
             const boardName = boardMeta?.name || (boardId ? `Board ${boardId}` : 'Unknown Board');
 
-            // 2. TRANSFORM
+            // TRANSFORM
             const sprints = reports.map((report, idx) => {
                 const sprint = targetSprints[idx];
                 if (!report) {
@@ -117,43 +108,20 @@ export const calculateSprintData = async (event) => {
                 return parseGreenHopperSprintReport(report, sprint);
             });
 
-            sprintAcc[team] = { boardId, boardName, sprints };
+            sprintsByTeam[team] = { boardId, boardName, sprints };
             console.log(`[SprintData] ${team}: board="${boardName}" (${boardId}), ${sprints.length} sprint(s) collected`);
 
         } catch (teamErr) {
             console.error(`[SprintData] Error processing team ${team}: ${teamErr.message}`);
-            sprintAcc[team] = { error: teamErr.message };
+            sprintsByTeam[team] = { error: teamErr.message };
         }
     }));
 
-    const newIndex   = sprintTeamIndex + batch.length;
-    const isComplete = newIndex >= teamsWithSprints.length;
-
-    // ── PARTIAL — more teams remain ───────────────────────────────────────────
-    if (!isComplete) {
-        try {
-            await storage.set(sessionKey(accountId, portfolioKey), {
-                ...session,
-                sprintTeamIndex: newIndex,
-                sprintAcc,
-            });
-        } catch (e) {
-            return { status: 'ERROR', message: `Failed to save partial sprint state: ${e.message}` };
-        }
-        return {
-            status:         'PARTIAL',
-            portfolioKey,
-            teamsProcessed: newIndex,
-            teamsTotal:     teamsWithSprints.length,
-            message:        `⏳ Sprint data: ${newIndex}/${teamsWithSprints.length} teams processed. Continuing…`,
-        };
-    }
-
-    // ── SUCCESS — all teams done ──────────────────────────────────────────────
+    // ── SUCCESS — write results and return ────────────────────────────────────
     try {
         await storage.set(sessionKey(accountId, portfolioKey), {
             ...session,
-            sprintsByTeam:   sprintAcc,
+            sprintsByTeam,
             sprintTeamIndex: undefined,
             sprintAcc:       undefined,
         });
@@ -166,7 +134,7 @@ export const calculateSprintData = async (event) => {
         portfolioKey,
         teamsProcessed: teamsWithSprints.length,
         message:        `✅ Sprint data collected for **${portfolioKey}** — ${teamsWithSprints.length} team(s) analysed.\n\n` +
-            Object.entries(sprintAcc)
+            Object.entries(sprintsByTeam)
                 .map(([t, d]) => d.error
                     ? `- **${t}**: ⚠️ ${d.error}`
                     : `- **${t}**: ${d.boardName} · ${d.sprints.length} sprint(s)`)

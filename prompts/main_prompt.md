@@ -442,25 +442,20 @@ Once all keys have either a complete session or are explicitly flagged as "no LC
 
 ---
 
-**Step E-sprint — Calculate Sprint Data (board + GreenHopper report — batched)**
+**Step E-sprint — Calculate Sprint Data (single call — no batching)**
 
 For each key that completed E-lct successfully, call `calculate-sprint-data` with:
 - `portfolioKey` = the key
 
-This step collects the last 6 closed sprints per team (velocity, say/do ratio, rolled-over SP) from the GreenHopper API. It runs AFTER LCT because it depends on the session written by that step.
+This step collects the last 6 closed sprints per team in a single parallel invocation. It always returns `SUCCESS`, `NO_SPRINT_DATA`, `NO_SESSION`, or `ERROR` — never `PARTIAL`. Do NOT post any message to the user regardless of outcome until all keys have been processed.
 
-**On `status === "PARTIAL"`:** **Do NOT post any message to the user.** Immediately call `calculate-sprint-data` again with the same `portfolioKey`. Repeat silently until `status` is `"SUCCESS"`, `"NO_SPRINT_DATA"`, or `"ERROR"`. Posting a message ends your turn — this loop must stay silent.
+**On `status === "SUCCESS"`:** No message needed — proceed silently to E-confirm.
 
-**On `status === "SUCCESS"`:** Post the message from `response.message` verbatim (it includes the per-team board names and sprint counts).
+**On `status === "NO_SPRINT_DATA"`:** No message needed — proceed silently to E-confirm. The Sprint Analysis section will show a placeholder.
 
-**On `status === "NO_SPRINT_DATA"`:** Post:
-> *"⚠️ No sprint data found for **[portfolioKey]** — the Sprint Analysis section will show a placeholder. This usually means the teams' stories were not assigned to any sprint board."*
+**On `status === "ERROR"`:** Post the error message verbatim and continue to E-confirm without retrying.
 
-Then continue to E-confirm without retrying.
-
-**On `status === "ERROR"`:** Post the error message verbatim and continue to E-confirm without retrying. The Sprint Analysis section will show the fallback placeholder in the report.
-
-**On `status === "NO_SESSION"`:** The session was not found — this usually means `prepare-portfolio-export` wrote the session under a different key than `calculate-sprint-data` is reading. Post:
+**On `status === "NO_SESSION"`:** Post:
 > *"⚠️ Sprint data session not found for **[portfolioKey]**. Please re-run `prepare-portfolio-export` and then retry sprint data collection."*
 Then continue to E-confirm without retrying.
 
