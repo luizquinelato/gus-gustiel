@@ -3,6 +3,7 @@
  *
  * Hidden maintenance + admin-management skills:
  *
+ *   inspectStorage     — lists all storage keys or reads a specific key (admin only).
  *   wipeGlobalStorage  — deletes ALL session entries for ALL users (admin only). Admin registry preserved.
  *   wipeUserStorage    — deletes the requesting user's own session entries (any user).
  *   addAdmin           — adds an accountId to the dynamic admin registry (super-admin only).
@@ -105,7 +106,94 @@ async function deleteAllMatchingKeys(prefix, excludeKeys = []) {
     return deleted;
 }
 
+// ── Storage inspector helper ──────────────────────────────────────────────────
+
+function summarizeStorageValue(key, value) {
+    if (key === ADMIN_REGISTRY_KEY) {
+        const entries = Array.isArray(value) ? value : [];
+        return `🔑 **Admin registry** — ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}\n` +
+            (entries.length === 0 ? '_Empty_' :
+                entries.map(e => `- \`${e.accountId}\` — ${e.displayName || '(no name)'} — ${e.emailAddress || '(no email)'}`).join('\n'));
+    }
+
+    if (key.startsWith('export_session:')) {
+        const portfolioKey = key.split(':')[2] || '?';
+        const lines = [`📦 **Session: ${portfolioKey}**`];
+
+        if (value.allTeams)            lines.push(`- **Teams (${value.allTeams.length}):** ${value.allTeams.join(', ')}`);
+        if (value.portfolioKey)        lines.push(`- **Portfolio key:** ${value.portfolioKey}`);
+        if (value.newestSprintIdByTeam) lines.push(`- **Board/sprint index:** ${Object.keys(value.newestSprintIdByTeam).length} team(s)`);
+
+        if (value.sprintsByTeam) {
+            const st = Object.entries(value.sprintsByTeam);
+            lines.push(`- **Sprint data:** ${st.length} teams`);
+            st.forEach(([t, d]) => lines.push(
+                d.error ? `  - ${t}: ⚠️ ${d.error}`
+                        : `  - ${t}: ${d.boardName || '?'} · ${d.sprints?.length ?? 0} sprint(s)`
+            ));
+        } else if (value.sprintTeamIndex !== undefined) {
+            lines.push(`- **Sprint data:** ⏳ In progress (${value.sprintTeamIndex} teams done)`);
+        } else {
+            lines.push(`- **Sprint data:** not yet collected`);
+        }
+
+        if (value.leadTimeByTeam)      lines.push(`- **Lead time data:** ${Object.keys(value.leadTimeByTeam).length} teams`);
+        if (value.sprintAcc)           lines.push(`- **Sprint accumulator (partial):** ${Object.keys(value.sprintAcc).length} teams buffered`);
+
+        return lines.join('\n');
+    }
+
+    // Generic fallback — truncated preview
+    const json    = JSON.stringify(value, null, 2);
+    const preview = json.length > 400 ? json.substring(0, 400) + '\n…(truncated)' : json;
+    return `🔍 \`${key}\`\n\`\`\`json\n${preview}\n\`\`\``;
+}
+
 // ── Resolvers ─────────────────────────────────────────────────────────────────
+
+export const inspectStorage = async (event) => {
+    const accountId = await getCurrentAccountId(event);
+    const key       = (event?.payload?.key || event?.key || '').trim();
+
+    if (!accountId || !(await isAdmin(accountId))) {
+        return { status: 'ERROR', message: '🚫 **Access denied.** This action is restricted to Gustiel administrators.' };
+    }
+
+    try {
+        // Read a specific key
+        if (key) {
+            const value = await storage.get(key);
+            if (value === undefined || value === null) {
+                return { status: 'NOT_FOUND', message: `🔍 Key \`${key}\` does not exist in storage.` };
+            }
+            return { status: 'SUCCESS', key, message: summarizeStorageValue(key, value) };
+        }
+
+        // List all keys
+        const keys   = [];
+        let cursor   = undefined;
+        do {
+            let q = storage.query().limit(20);
+            if (cursor) q = q.cursor(cursor);
+            const result = await q.getMany();
+            keys.push(...result.results.map(r => r.key));
+            cursor = result.nextCursor;
+        } while (cursor);
+
+        if (keys.length === 0) {
+            return { status: 'SUCCESS', message: '📭 Storage is empty — no keys found.' };
+        }
+
+        const lines = keys.map(k => `- \`${k}\``);
+        return {
+            status:  'SUCCESS',
+            count:   keys.length,
+            message: `🗄️ **Storage keys (${keys.length}):**\n${lines.join('\n')}\n\n_Tip: ask me to "inspect storage key \`<key>\`" to see its contents._`,
+        };
+    } catch (err) {
+        return { status: 'ERROR', message: `Storage inspection failed: ${err.message}` };
+    }
+};
 
 export const wipeGlobalStorage = async (event) => {
     const confirm   = (event?.payload?.confirm || event?.confirm || '').trim().toUpperCase();

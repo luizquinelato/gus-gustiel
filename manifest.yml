@@ -20,6 +20,7 @@ modules:
         - calculate-lead-time-data
         - calculate-sprint-data
         - export-to-confluence
+        - inspect-storage
         - wipe-global-storage
         - wipe-user-storage
         - add-admin
@@ -28,6 +29,7 @@ modules:
         - clear-admin-registry
         - get-my-account-id
         - analyze-portfolio-chat
+        - get-team-sprint-analysis
 
   function:
     - key: getAgentVersion
@@ -62,8 +64,12 @@ modules:
       handler: index.clearAdminRegistry
     - key: getMyAccountId
       handler: index.getMyAccountId
+    - key: inspectStorage
+      handler: index.inspectStorage
     - key: chatAnalysisSection
       handler: index.chatAnalysisSection
+    - key: getTeamSprintAnalysis
+      handler: index.getTeamSprintAnalysis
 
   action:
     - key: get-agent-version
@@ -254,6 +260,18 @@ modules:
           description: The Jira key used in the preceding pipeline steps (e.g. WX-1145).
           required: true
 
+    - key: get-team-sprint-analysis
+      function: getTeamSprintAnalysis
+      name: Get Team Sprint Analysis
+      actionVerb: GET
+      description: "On-demand sprint report for one agile team. Discovers sprint history from active issues, then computes velocity, say/do ratio, and rolled-over SP for the last 6 closed sprints. Renders a markdown table in chat."
+      inputs:
+        teamName:
+          title: Team Name
+          type: string
+          description: "The agile team name as it appears in the Jira Agile Team field (e.g. Titan, Comet, Vanguard)."
+          required: true
+
     - key: wipe-global-storage
       function: wipeGlobalStorage
       name: Wipe Global Storage
@@ -355,6 +373,23 @@ modules:
           type: string
           description: Must be set to 'YES'.
           required: true
+
+    - key: inspect-storage
+      function: inspectStorage
+      name: Inspect Storage
+      actionVerb: GET
+      description: >-
+        Admin-only. Lists all Forge storage keys, or reads and summarises the
+        contents of a specific key. Session keys are shown as a structured
+        summary (teams, sprint counts, etc.) rather than raw JSON.
+      inputs:
+        key:
+          title: Storage Key
+          type: string
+          description: >-
+            Optional. The specific storage key to inspect (e.g.
+            "export_session:accountId:WX-1145"). If omitted, lists all keys.
+          required: false
 
     - key: analyze-portfolio-chat
       function: chatAnalysisSection

@@ -607,3 +607,179 @@ export function buildCountMap(items, getParentKey, checkDone) {
     return map;
 }
 
+/**
+ * Compute per-sprint velocity, rolled-over SP, planned SP, and Say/Do ratio
+ * from a flat set of Jira issues (no GreenHopper required).
+ *
+ * Assignment rules:
+ *   Done issues    → velocity credited to the MOST RECENT target sprint in the
+ *                    issue's sprint history (best approximation of completion sprint).
+ *   Not-Done issues → rolled-over in EVERY target sprint they appear in
+ *                     (they were still in-flight when each of those sprints closed).
+ *
+ * Note: `planned` = velocity + rolledOver (snapshot at sprint close — no mid-sprint
+ * scope-change data without GreenHopper). Say/Do = velocity / planned.
+ *
+ * @param {Object[]} issues        - Raw Jira issues including status, storyPoints, sprint fields.
+ * @param {Object[]} targetSprints - Sprint objects to compute metrics for (from extractClosedSprints).
+ * @param {string}   sprintField   - Custom field key for the sprint array, e.g. 'customfield_10020'.
+ * @param {string}   storyPtsField - Custom field key for story points, e.g. 'customfield_10038'.
+ * @returns {Object[]} Per-sprint metrics: { id, name, endDate, velocity, velocityNoSp,
+ *                     rolledOver, rolledOverNoSp, planned, plannedNoSp, sayDo, sayDoEmoji }.
+ */
+export function computeSprintMetrics(issues, targetSprints, sprintField, storyPtsField) {
+    const targetIds = new Set(targetSprints.map(s => s.id));
+    const stats     = {};
+    for (const s of targetSprints) {
+        stats[s.id] = { velocity: 0, rolledOver: 0, velocityNoSp: 0, rolledOverNoSp: 0 };
+    }
+
+    for (const issue of issues) {
+        const raw    = issue.fields?.[storyPtsField];
+        const sp     = typeof raw === 'number'  ? raw
+                     : raw?.value != null        ? parseFloat(raw.value)
+                     : 0;
+        const hasNoSp = !sp;
+
+        const isDone    = issue.fields?.status?.statusCategory?.key === 'done';
+        const inSprints = (issue.fields?.[sprintField] || [])
+            .filter(s => targetIds.has(s.id))
+            .sort((a, b) => new Date(b.endDate || 0) - new Date(a.endDate || 0));
+        if (!inSprints.length) continue;
+
+        if (isDone) {
+            // Credit velocity to the most recent target sprint this issue appeared in.
+            stats[inSprints[0].id].velocity += sp;
+            if (hasNoSp) stats[inSprints[0].id].velocityNoSp++;
+        } else {
+            // Count as rolled-over in every target sprint the issue was associated with.
+            for (const s of inSprints) {
+                stats[s.id].rolledOver += sp;
+                if (hasNoSp) stats[s.id].rolledOverNoSp++;
+            }
+        }
+    }
+
+    return targetSprints.map(sprint => {
+        const { velocity, rolledOver, velocityNoSp, rolledOverNoSp } = stats[sprint.id];
+        const planned    = velocity + rolledOver;
+        const plannedNoSp = velocityNoSp + rolledOverNoSp;
+        const sayDo      = planned > 0 ? velocity / planned : 0;
+        return {
+            id:             sprint.id,
+            name:           sprint.name,
+            endDate:        sprint.endDate,
+            velocity:       Math.round(velocity),
+            velocityNoSp,
+            rolledOver:     Math.round(rolledOver),
+            rolledOverNoSp,
+            planned:        Math.round(planned),
+            plannedNoSp,
+            sayDo:          Math.round(sayDo * 100),
+            sayDoEmoji:     sayDo >= 0.8 ? '🟢' : sayDo >= 0.5 ? '🟡' : '🔴',
+        };
+    });
+}
+
+/**
+ * Parse a GreenHopper sprint report into the sprint metrics shape expected by
+ * formatSprintSection(). Uses the correct field semantics:
+ *   - Planned   → estimateStatistic  (original commitment at sprint start)
+ *   - All others → currentEstimateStatistic (final value at sprint close)
+ *
+ * Re-estimation delta = (final SP of originally committed items) − planned.
+ * Positive = items were re-estimated upward; negative = downward.
+ *
+ * @param {Object} report  - Raw GreenHopper sprint report response
+ * @param {Object} sprint  - Sprint descriptor { id, name, endDate }
+ * @returns {Object}       - Sprint metrics shaped for formatSprintSection()
+ */
+export function parseGreenHopperSprintReport(report, sprint) {
+    const contents = report?.contents;
+    if (!contents) {
+        return { id: sprint.id, name: sprint.name, endDate: sprint.endDate, error: 'Empty GreenHopper response' };
+    }
+
+    const addedKeys = new Set(Object.keys(contents.issueKeysAddedDuringSprint || {}));
+
+    const getSp   = (issue, field) => {
+        const v = issue[field]?.statFieldValue?.value;
+        return typeof v === 'number' ? v : 0;
+    };
+    const isNoSp  = (issue, field) => {
+        const sv = issue[field]?.statFieldValue;
+        return !sv || sv.value == null;
+    };
+
+    let planned = 0,   plannedNoSp = 0;   // estimateStatistic of original committed items
+    let velocity = 0,  velocityNoSp = 0;  // currentEstimateStatistic of completed
+    let rolledOver = 0, rolledOverNoSp = 0; // currentEstimateStatistic of not-completed
+    let removed = 0,   removedNoSp = 0;   // currentEstimateStatistic of punted
+    let added = 0,     addedNoSp = 0;     // currentEstimateStatistic of mid-sprint added
+    let finalOriginal = 0;                // currentEstimateStatistic of NON-added items
+
+    for (const issue of (contents.completedIssues || [])) {
+        const cur = getSp(issue, 'currentEstimateStatistic');
+        velocity += cur;
+        if (isNoSp(issue, 'currentEstimateStatistic')) velocityNoSp++;
+        if (addedKeys.has(issue.key)) {
+            added += cur;
+            if (isNoSp(issue, 'currentEstimateStatistic')) addedNoSp++;
+        } else {
+            planned += getSp(issue, 'estimateStatistic');
+            if (isNoSp(issue, 'estimateStatistic')) plannedNoSp++;
+            finalOriginal += cur;
+        }
+    }
+
+    for (const issue of (contents.issuesNotCompletedInCurrentSprint || [])) {
+        const cur = getSp(issue, 'currentEstimateStatistic');
+        rolledOver += cur;
+        if (isNoSp(issue, 'currentEstimateStatistic')) rolledOverNoSp++;
+        if (addedKeys.has(issue.key)) {
+            added += cur;
+            if (isNoSp(issue, 'currentEstimateStatistic')) addedNoSp++;
+        } else {
+            planned += getSp(issue, 'estimateStatistic');
+            if (isNoSp(issue, 'estimateStatistic')) plannedNoSp++;
+            finalOriginal += cur;
+        }
+    }
+
+    for (const issue of (contents.puntedIssues || [])) {
+        const cur = getSp(issue, 'currentEstimateStatistic');
+        removed += cur;
+        if (isNoSp(issue, 'currentEstimateStatistic')) removedNoSp++;
+        if (addedKeys.has(issue.key)) {
+            added += cur;
+            if (isNoSp(issue, 'currentEstimateStatistic')) addedNoSp++;
+        } else {
+            planned += getSp(issue, 'estimateStatistic');
+            if (isNoSp(issue, 'estimateStatistic')) plannedNoSp++;
+            finalOriginal += cur;
+        }
+    }
+
+    const plannedR   = Math.round(planned);
+    const sayDo      = plannedR > 0 ? Math.round(velocity) / plannedR : 0;
+    const reEstimDelta = Math.round(finalOriginal) - plannedR; // +ve = re-estimated up
+
+    return {
+        id:             sprint.id,
+        name:           sprint.name,
+        endDate:        sprint.endDate,
+        planned:        plannedR,
+        plannedNoSp,
+        added:          Math.round(added),
+        addedNoSp,
+        removed:        Math.round(removed),
+        removedNoSp,
+        completed:      Math.round(velocity),
+        velocityNoSp,
+        rolledOver:     Math.round(rolledOver),
+        rolledOverNoSp,
+        sayDo,
+        sayDoRag:       sayDo >= 0.8 ? '🟢' : sayDo >= 0.5 ? '🟡' : '🔴',
+        reEstimDelta,
+    };
+}

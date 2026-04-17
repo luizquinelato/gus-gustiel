@@ -158,7 +158,11 @@ export const preparePortfolioExport = async (event) => {
             newestSprintIdByTeam: newestSprintIdByTeamE,
         };
         for (const k of allKeys) {
-            try { await storage.set(sessionKey(accountId, k), sessionData); }
+            try {
+                const prev = await storage.get(sessionKey(accountId, k)).catch(() => null);
+                const toSave = prev?.sprintsByTeam ? { ...sessionData, sprintsByTeam: prev.sprintsByTeam } : sessionData;
+                await storage.set(sessionKey(accountId, k), toSave);
+            }
             catch (storeErr) { return { status: 'ERROR', message: `Failed to save session data for ${k}: ${storeErr.message}` }; }
         }
         return {
@@ -214,7 +218,11 @@ export const preparePortfolioExport = async (event) => {
             newestSprintIdByTeam: newestSprintIdByTeamI,
         };
         for (const k of allKeys) {
-            try { await storage.set(sessionKey(accountId, k), sessionDataI); }
+            try {
+                const prev = await storage.get(sessionKey(accountId, k)).catch(() => null);
+                const toSave = prev?.sprintsByTeam ? { ...sessionDataI, sprintsByTeam: prev.sprintsByTeam } : sessionDataI;
+                await storage.set(sessionKey(accountId, k), toSave);
+            }
             catch (storeErr) { return { status: 'ERROR', message: `Failed to save session data for ${k}: ${storeErr.message}` }; }
         }
         return {
@@ -306,7 +314,9 @@ export const preparePortfolioExport = async (event) => {
 
     for (const k of allKeys) {
         try {
-            await storage.set(sessionKey(accountId, k), sessionData);
+            const prev   = await storage.get(sessionKey(accountId, k)).catch(() => null);
+            const toSave = prev?.sprintsByTeam ? { ...sessionData, sprintsByTeam: prev.sprintsByTeam } : sessionData;
+            await storage.set(sessionKey(accountId, k), toSave);
         } catch (storeErr) {
             return { status: 'ERROR', message: `Failed to save session data for ${k}: ${storeErr.message}` };
         }
