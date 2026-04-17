@@ -649,40 +649,49 @@ export function formatTeamEfficiencyTable(allTeams, teamStats) {
 
 /**
  * Renders per-team sprint metrics as a Markdown table for chat output.
+ * Uses GreenHopper data shape from parseGreenHopperSprintReport().
  *
- * Columns: Sprint name | Velocity | Rolled Over | Planned | Say/Do (with RAG emoji).
- * A blockquote summary line with averages is appended below the table.
+ * Columns: Sprint | Planned | Added | Removed | Velocity | Rolled Over | Say/Do
  *
- * @param {string}   teamName - Display name of the agile team.
- * @param {Object[]} sprints  - Array produced by computeSprintMetrics().
+ * @param {string}   teamName  - Display name of the agile team.
+ * @param {string}   boardName - Board name resolved via getBoardById().
+ * @param {Object[]} sprints   - Array produced by parseGreenHopperSprintReport().
  * @returns {string} Markdown string ready for Rovo chat output.
  */
-export function formatTeamSprintChat(teamName, sprints) {
+export function formatTeamSprintChat(teamName, boardName, sprints) {
     if (!sprints || sprints.length === 0) {
         return `## 🏃 Sprint Analysis — ${teamName}\n\n_No sprint data available for the last 6 months._`;
     }
-
-    const lines = [
-        `## 🏃 Sprint Analysis — ${teamName}`,
-        '',
-        '| Sprint | ✅ Velocity | 🔄 Rolled Over | 📋 Planned | Say/Do |',
-        '|--------|:----------:|:--------------:|:---------:|:------:|',
-    ];
 
     const spCell = (sp, noSp) => noSp > 0
         ? `${sp} SP _(${noSp} item${noSp === 1 ? '' : 's'} w/o SP)_`
         : `${sp} SP`;
 
+    const lines = [
+        `## 🏃 Sprint Analysis — ${teamName}`,
+        boardName ? `> 📋 **Board:** ${boardName}` : '',
+        '',
+        '| Sprint | Planned | Added | Removed | ✅ Velocity | 🔄 Rolled Over | Say/Do |',
+        '|--------|:-------:|:-----:|:-------:|:-----------:|:--------------:|:------:|',
+    ].filter(Boolean);
+
     for (const s of sprints) {
-        lines.push(`| **${s.name}** | ${spCell(s.velocity, s.velocityNoSp)} | ${spCell(s.rolledOver, s.rolledOverNoSp)} | ${spCell(s.planned, s.plannedNoSp)} | ${s.sayDoEmoji} ${s.sayDo}% |`);
+        if (s.error) {
+            lines.push(`| **${s.name || s.id}** | — | — | — | — | — | ⚠️ ${s.error} |`);
+            continue;
+        }
+        const sd = `${s.sayDoRag} ${Math.round(s.sayDo * 100)}%`;
+        lines.push(`| **${s.name}** | ${spCell(s.planned, s.plannedNoSp)} | ${spCell(s.added, s.addedNoSp)} | ${spCell(s.removed, s.removedNoSp)} | **${spCell(s.completed, s.velocityNoSp)}** | ${spCell(s.rolledOver, s.rolledOverNoSp)} | ${sd} |`);
     }
 
-    const avgVelocity = Math.round(sprints.reduce((sum, s) => sum + s.velocity, 0) / sprints.length);
-    const avgSayDo    = Math.round(sprints.reduce((sum, s) => sum + s.sayDo,    0) / sprints.length);
-    const avgEmoji    = avgSayDo >= 80 ? '🟢' : avgSayDo >= 50 ? '🟡' : '🔴';
-
-    lines.push('');
-    lines.push(`> **Avg Velocity:** ${avgVelocity} SP/sprint · **Avg Say/Do:** ${avgEmoji} ${avgSayDo}%`);
+    const validSprints = sprints.filter(s => !s.error);
+    if (validSprints.length > 0) {
+        const avgVelocity = Math.round(validSprints.reduce((a, s) => a + s.completed, 0) / validSprints.length);
+        const avgSayDo    = validSprints.reduce((a, s) => a + s.sayDo, 0) / validSprints.length;
+        const avgEmoji    = avgSayDo >= 0.8 ? '🟢' : avgSayDo >= 0.5 ? '🟡' : '🔴';
+        lines.push('');
+        lines.push(`> **Avg Velocity:** ${avgVelocity} SP/sprint · **Avg Say/Do:** ${avgEmoji} ${Math.round(avgSayDo * 100)}%`);
+    }
 
     return lines.join('\n');
 }
