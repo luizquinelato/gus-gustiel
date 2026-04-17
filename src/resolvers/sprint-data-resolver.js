@@ -2,14 +2,15 @@
  * Sprint Data Resolver — Step 3 of the ETL Pipeline
  *
  * For each agile team identified in the session, this resolver:
- *   1. Uses the stored newest sprint ID to discover the team's Jira board
- *   2. Fetches the board's most recent closed sprints (last 6 months, max 6)
- *   3. Calls the GreenHopper sprint report API for each sprint
- *   4. Computes velocity, say/do ratio, and rolled-over SP per sprint
+ *   1. Reads the pre-collected recentClosedSprints per team from the session (Step 1)
+ *   2. Calls the GreenHopper sprint report API for each sprint (asUser, per-sprint)
+ *   3. Uses parseGreenHopperSprintReport() to extract planned (estimateStatistic) and
+ *      velocity/rolledOver/removed/added (currentEstimateStatistic)
+ *   4. Returns data shaped for formatSprintSection()
  *
  * Uses the same PARTIAL → SUCCESS pattern as calculate-lead-time-data.
  * Processes ANALYSIS_SPRINT_TEAMS_PER_BATCH teams per Forge invocation to
- * stay well within the 25-second timeout (~9 API calls per team).
+ * stay well within the 25-second timeout.
  *
  * Resume token: session.sprintTeamIndex (int, 0 on first call)
  * Accumulator:  session.sprintAcc       (object, built up across PARTIAL calls)
@@ -18,15 +19,14 @@
  * Storage key: export_session:<accountId>:<portfolioKey>
  */
 
-import { storage }                                                        from '@forge/api';
-import { getBoardById, getSprintReport }                                  from '../services/jira-api-service.js';
-import { ANALYSIS_SPRINT_TEAMS_PER_BATCH }                               from '../config/constants.js';
+import { storage }                                          from '@forge/api';
+import { getBoardById,
+         getGreenHopperSprintReport }                       from '../services/jira-api-service.js';
+import { parseGreenHopperSprintReport }                     from '../transformers/portfolio-transformer.js';
+import { ANALYSIS_SPRINT_TEAMS_PER_BATCH }                  from '../config/constants.js';
 
 const sessionKey = (accountId, portfolioKey) =>
     `export_session:${accountId}:${portfolioKey}`;
-
-/** Say/Do RAG thresholds */
-const sayDoRag = ratio => ratio >= 0.8 ? '🟢' : ratio >= 0.5 ? '🟡' : '🔴';
 
 export const calculateSprintData = async (event) => {
     const portfolioKey = (event?.payload?.portfolioKey || event?.portfolioKey || '').trim().toUpperCase();
@@ -51,10 +51,32 @@ export const calculateSprintData = async (event) => {
     const newestSprintIdByTeam = session.newestSprintIdByTeam || {};
     const allTeams             = session.allTeams || [];
 
-    // Only process teams for which we captured a sprint ID in Step 1
-    const teamsWithSprints = allTeams.filter(t => newestSprintIdByTeam[t]?.id);
+    // Only process teams that have pre-collected closed sprints from Step 1
+    const teamsWithSprints = allTeams.filter(t => newestSprintIdByTeam[t]?.recentClosedSprints?.length > 0);
+
+    // Detect old session format (no recentClosedSprints) — clear stale sprint data so
+    // the export shows the placeholder rather than old "Report unavailable" rows.
+    const hasOldFormat = allTeams.length > 0
+        && Object.keys(newestSprintIdByTeam).length > 0
+        && teamsWithSprints.length === 0;
 
     if (teamsWithSprints.length === 0) {
+        if (hasOldFormat) {
+            // Clear stale data so the Confluence export won't show outdated sprint rows
+            try {
+                await storage.set(sessionKey(accountId, portfolioKey), {
+                    ...session,
+                    sprintsByTeam:   undefined,
+                    sprintTeamIndex: undefined,
+                    sprintAcc:       undefined,
+                });
+            } catch (_) { /* best-effort */ }
+            return {
+                status: 'NO_SPRINT_DATA',
+                portfolioKey,
+                message: `⚠️ Session for **${portfolioKey}** is from an older format and does not contain sprint history snapshots.\n\nPlease **wipe the session** and re-run \`prepare-portfolio-export\` to capture sprint data, then run \`calculate-sprint-data\` again.`,
+            };
+        }
         return {
             status: 'NO_SPRINT_DATA',
             portfolioKey,
@@ -73,53 +95,28 @@ export const calculateSprintData = async (event) => {
         const newestSprint = newestSprintIdByTeam[team];
 
         try {
-            // 1. Board ID is embedded in the sprint field on the issue (fetched in Step 1)
             const boardId = newestSprint.boardId;
-            if (!boardId) {
-                sprintAcc[team] = { error: `No boardId found on sprint ${newestSprint.id} (${newestSprint.name}). Team stories may not be assigned to a sprint board.` };
-                continue;
-            }
-
-            // 2. Resolve board name (best-effort; falls back gracefully)
-            const boardMeta = await getBoardById(boardId);
-            const boardName = boardMeta?.name || `Board ${boardId}`;
-
-            // 3. Use pre-collected closed sprints from Step 1 (embedded in story sprint field).
-            //    recentClosedSprints is already filtered to last 6 months and sorted newest-first.
             const targetSprints = newestSprint.recentClosedSprints || [];
 
-            if (targetSprints.length === 0) {
-                sprintAcc[team] = { boardId, boardName, sprints: [], warning: 'No closed sprints found in story sprint history for the last 6 months.' };
-                continue;
-            }
+            // 1. Resolve board name (best-effort; falls back gracefully)
+            const boardMeta = await getBoardById(boardId);
+            const boardName = boardMeta?.name || (boardId ? `Board ${boardId}` : 'Unknown Board');
 
-            // 4. GreenHopper report per sprint
-            const sprintsWithData = [];
+            // 2. EXTRACT — GreenHopper sprint report (asApp, works in all Forge contexts)
+            const sprints = [];
+
             for (const sprint of targetSprints) {
-                const report = await getSprintReport(boardId, sprint.id);
+                const report = await getGreenHopperSprintReport(boardId, sprint.id);
                 if (!report) {
-                    sprintsWithData.push({ id: sprint.id, name: sprint.name, endDate: sprint.endDate, error: 'Report unavailable' });
+                    console.warn(`[SprintData] ${team}: GreenHopper returned null for sprint ${sprint.id} (${sprint.name})`);
+                    sprints.push({ id: sprint.id, name: sprint.name, endDate: sprint.endDate, error: 'Sprint report unavailable' });
                     continue;
                 }
-                const finalScope = report.planned + report.added - report.removed;
-                const sayDo      = finalScope > 0 ? report.completed / finalScope : 0;
-                sprintsWithData.push({
-                    id:          sprint.id,
-                    name:        sprint.name,
-                    endDate:     sprint.endDate,
-                    planned:     Math.round(report.planned),
-                    added:       Math.round(report.added),
-                    removed:     Math.round(report.removed),
-                    completed:   Math.round(report.completed),
-                    rolledOver:  Math.round(report.notCompleted),
-                    finalScope:  Math.round(finalScope),
-                    sayDo:       Math.round(sayDo * 100) / 100,
-                    sayDoRag:    sayDoRag(sayDo),
-                });
+                sprints.push(parseGreenHopperSprintReport(report, sprint));
             }
 
-            sprintAcc[team] = { boardId, boardName, sprints: sprintsWithData };
-            console.log(`[SprintData] ${team}: board="${boardName}" (${boardId}), ${sprintsWithData.length} sprint(s) collected`);
+            sprintAcc[team] = { boardId, boardName, sprints };
+            console.log(`[SprintData] ${team}: board="${boardName}" (${boardId}), ${sprints.length} sprint(s) collected`);
 
         } catch (teamErr) {
             console.error(`[SprintData] Error processing team ${team}: ${teamErr.message}`);

@@ -559,33 +559,48 @@ export function formatSprintSection(allTeams, sprintsByTeam) {
     const HEADER = '| Sprint | Planned | Added | Removed | ✅ Velocity | 🔄 Rolled Over | Say/Do |';
     const DIVIDER = '|---|---|---|---|---|---|---|';
 
+    // Renders a SP cell. When items lack estimates, the note appears on a second line
+    // (↵ is split into separate <p> tags by cellToHtml in confluence-formatter.js).
+    const spCell = (sp, noSp) => noSp > 0
+        ? `${sp} SP↵_(${noSp} item${noSp === 1 ? '' : 's'} w/o SP)_`
+        : `${sp} SP`;
+
     const spRow = (s) => {
         if (s.error) return `| ${s.name || s.id} | — | — | — | — | — | ⚠️ ${s.error} |`;
         const sd = `${s.sayDoRag} ${Math.round(s.sayDo * 100)}%`;
-        return `| ${s.name} | ${s.planned} SP | ${s.added} SP | ${s.removed} SP | **${s.completed} SP** | ${s.rolledOver} SP | ${sd} |`;
+        return `| ${s.name} | ${spCell(s.planned, s.plannedNoSp)} | ${spCell(s.added, s.addedNoSp)} | ${spCell(s.removed, s.removedNoSp)} | **${spCell(s.completed, s.velocityNoSp)}** | ${spCell(s.rolledOver, s.rolledOverNoSp)} | ${sd} |`;
     };
 
     const sections = [];
 
     for (const team of allTeams) {
         const data = sprintsByTeam[team];
-        if (!data) { sections.push(`### ${team}\n> _No sprint data collected for this team._\n`); continue; }
-        if (data.error) { sections.push(`### ${team}\n> ⚠️ ${data.error}\n`); continue; }
+        if (!data) { sections.push(`### ${team}\n> _No sprint data collected for this team._\n\n---\n`); continue; }
+        if (data.error) { sections.push(`### ${team}\n> ⚠️ ${data.error}\n\n---\n`); continue; }
 
         const header = `### ${team} — ${data.boardName}`;
 
         if (!data.sprints || data.sprints.length === 0) {
-            sections.push([header, `> ℹ️ ${data.warning || 'No closed sprints found in the last 6 months.'}`, ''].join('\n'));
+            sections.push([header, `> ℹ️ ${data.warning || 'No closed sprints found in the last 6 months.'}`, '', '---', ''].join('\n'));
             continue;
         }
 
         const validSprints = data.sprints.filter(s => !s.error);
         let summary = '';
+        let reEstimNote = '';
         if (validSprints.length > 0) {
             const avgVelocity = Math.round(validSprints.reduce((a, s) => a + s.completed, 0) / validSprints.length);
             const avgSayDo    = validSprints.reduce((a, s) => a + s.sayDo, 0) / validSprints.length;
             const sdRag       = avgSayDo >= 0.8 ? '🟢' : avgSayDo >= 0.5 ? '🟡' : '🔴';
             summary = `\n**Avg Velocity:** ${avgVelocity} SP · **Avg Say/Do:** ${sdRag} ${Math.round(avgSayDo * 100)}%`;
+
+            // Re-estimation note: sum of delta across sprints (non-zero = items were re-scoped)
+            const totalDelta = validSprints.reduce((a, s) => a + (s.reEstimDelta || 0), 0);
+            if (totalDelta !== 0) {
+                const sign = totalDelta > 0 ? '+' : '';
+                reEstimNote = `> 📊 *Planned SP reflects each story's original estimate at sprint start. ` +
+                    `Committed items were net re-estimated by **${sign}${totalDelta} SP** across this period.*`;
+            }
         }
 
         sections.push([
@@ -594,6 +609,8 @@ export function formatSprintSection(allTeams, sprintsByTeam) {
             DIVIDER,
             ...data.sprints.map(spRow),
             summary,
+            reEstimNote,
+            '---',
             '',
         ].join('\n'));
     }
@@ -628,3 +645,44 @@ export function formatTeamEfficiencyTable(allTeams, teamStats) {
     return [header, ...rows].join('\n');
 }
 
+
+
+/**
+ * Renders per-team sprint metrics as a Markdown table for chat output.
+ *
+ * Columns: Sprint name | Velocity | Rolled Over | Planned | Say/Do (with RAG emoji).
+ * A blockquote summary line with averages is appended below the table.
+ *
+ * @param {string}   teamName - Display name of the agile team.
+ * @param {Object[]} sprints  - Array produced by computeSprintMetrics().
+ * @returns {string} Markdown string ready for Rovo chat output.
+ */
+export function formatTeamSprintChat(teamName, sprints) {
+    if (!sprints || sprints.length === 0) {
+        return `## 🏃 Sprint Analysis — ${teamName}\n\n_No sprint data available for the last 6 months._`;
+    }
+
+    const lines = [
+        `## 🏃 Sprint Analysis — ${teamName}`,
+        '',
+        '| Sprint | ✅ Velocity | 🔄 Rolled Over | 📋 Planned | Say/Do |',
+        '|--------|:----------:|:--------------:|:---------:|:------:|',
+    ];
+
+    const spCell = (sp, noSp) => noSp > 0
+        ? `${sp} SP _(${noSp} item${noSp === 1 ? '' : 's'} w/o SP)_`
+        : `${sp} SP`;
+
+    for (const s of sprints) {
+        lines.push(`| **${s.name}** | ${spCell(s.velocity, s.velocityNoSp)} | ${spCell(s.rolledOver, s.rolledOverNoSp)} | ${spCell(s.planned, s.plannedNoSp)} | ${s.sayDoEmoji} ${s.sayDo}% |`);
+    }
+
+    const avgVelocity = Math.round(sprints.reduce((sum, s) => sum + s.velocity, 0) / sprints.length);
+    const avgSayDo    = Math.round(sprints.reduce((sum, s) => sum + s.sayDo,    0) / sprints.length);
+    const avgEmoji    = avgSayDo >= 80 ? '🟢' : avgSayDo >= 50 ? '🟡' : '🔴';
+
+    lines.push('');
+    lines.push(`> **Avg Velocity:** ${avgVelocity} SP/sprint · **Avg Say/Do:** ${avgEmoji} ${avgSayDo}%`);
+
+    return lines.join('\n');
+}

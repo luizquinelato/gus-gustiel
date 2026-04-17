@@ -164,7 +164,7 @@ export async function getSprintById(sprintId) {
  */
 export async function getBoardById(boardId) {
     try {
-        const res = await asUser().requestJira(
+        const res = await asApp().requestJira(
             route`/rest/agile/1.0/board/${boardId}`,
             { headers: { 'Accept': 'application/json' } }
         );
@@ -199,45 +199,73 @@ export async function getBoardClosedSprints(boardId, maxResults = 15) {
 }
 
 /**
- * Fetch a sprint report from the GreenHopper API.
- * Returns a normalised { planned, added, removed, completed, notCompleted } object
- * or null if the request fails.
+ * Fetch the GreenHopper sprint report for a given board and sprint.
+ * Uses asApp() — consistent with all other Agile API calls, works in any Forge context.
+ * Returns the full report object or null on failure.
  *
- * Story-point derivation:
- *   planned   = completedInit + notCompletedInit + puntedInit  (committed at sprint start)
- *   added     = max(0, (completed + notCompleted) − (planned − punted))  (added mid-sprint)
- *   removed   = punted  (removed mid-sprint)
- *   completed = completedIssuesEstimateSum  (velocity)
- *   notCompleted = issuesNotCompletedEstimateSum  (rolled over)
- *
- * @param {number|string} boardId  - rapidViewId in GreenHopper terms
+ * @param {number|string} boardId
  * @param {number|string} sprintId
  * @returns {Promise<Object|null>}
  */
-export async function getSprintReport(boardId, sprintId) {
+export async function getGreenHopperSprintReport(boardId, sprintId) {
     try {
-        const res = await asUser().requestJira(
+        const res = await asApp().requestJira(
             route`/rest/greenhopper/1.0/rapid/charts/sprintreport?rapidViewId=${boardId}&sprintId=${sprintId}`,
             { headers: { 'Accept': 'application/json' } }
         );
-        if (!res.ok) return null;
-        const data = await res.json();
-        const c = data.contents;
-        const val = obj => (obj && obj.value != null ? parseFloat(obj.value) : 0);
-
-        const completedInit    = val(c.completedIssuesInitialEstimateSum);
-        const notCompletedInit = val(c.issuesNotCompletedInitialEstimateSum);
-        const puntedInit       = val(c.puntedIssuesInitialEstimateSum);
-        const completed        = val(c.completedIssuesEstimateSum);
-        const notCompleted     = val(c.issuesNotCompletedEstimateSum);
-        const punted           = val(c.puntedIssuesEstimateSum);
-
-        const planned = completedInit + notCompletedInit + puntedInit;
-        const added   = Math.max(0, (completed + notCompleted) - (planned - punted));
-
-        return { planned, added, removed: punted, completed, notCompleted };
+        if (!res.ok) {
+            console.warn(`[GreenHopper] Sprint ${sprintId} board ${boardId} → HTTP ${res.status}`);
+            return null;
+        }
+        return await res.json();
     } catch (e) {
-        console.error(`[getSprintReport] Error for board ${boardId} sprint ${sprintId}: ${e.message}`);
+        console.error(`[GreenHopper] Error sprint ${sprintId}: ${e.message}`);
+        return null;
+    }
+}
+
+/**
+ * Compute sprint metrics via a standard JQL search (asApp, no GreenHopper needed).
+ * Returns a normalised { planned, added, removed, completed, notCompleted } object
+ * or null if the request fails.
+ *
+ * Note: without the GreenHopper "planned at start" snapshot, `planned` is approximated
+ * as completed + notCompleted (all SP in the sprint at close time). `added` and `removed`
+ * are returned as 0 because mid-sprint scope changes are not available via JQL.
+ *
+ * @param {number|string} sprintId
+ * @param {string}        storyPointsField  - e.g. 'customfield_10038'
+ * @returns {Promise<Object|null>}
+ */
+export async function getSprintReport(sprintId, storyPointsField) {
+    try {
+        const issues = await searchJira(
+            `sprint = ${sprintId} AND issuetype in standardIssueTypes()`,
+            ['status', storyPointsField]
+        );
+
+        let completed    = 0;
+        let notCompleted = 0;
+
+        for (const issue of issues) {
+            const raw = issue.fields?.[storyPointsField];
+            const sp  = typeof raw === 'number' ? raw
+                      : raw?.value != null       ? parseFloat(raw.value)
+                      : 0;
+            if (!sp) continue;
+
+            const statusKey = issue.fields?.status?.statusCategory?.key;
+            if (statusKey === 'done') {
+                completed += sp;
+            } else {
+                notCompleted += sp;
+            }
+        }
+
+        const planned = completed + notCompleted; // approximation (completed + rolled-over at sprint close)
+        return { planned, added: 0, removed: 0, completed, notCompleted };
+    } catch (e) {
+        console.error(`[getSprintReport] Error for sprint ${sprintId}: ${e.message}`);
         return null;
     }
 }

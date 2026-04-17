@@ -178,3 +178,35 @@ export function chunk(arr, n) {
     return out;
 }
 
+/**
+ * Extract unique closed sprints from a set of raw Jira issues.
+ *
+ * Reads the sprint custom field (an array of sprint objects) from each issue,
+ * deduplicates by sprint ID, filters to sprints whose endDate falls within the
+ * look-back window, sorts newest-first, and caps the result at `maxSprints`.
+ *
+ * @param {Object[]} issues         - Raw Jira issue objects that include the sprint field.
+ * @param {string}   sprintField    - Custom field key, e.g. 'customfield_10020'.
+ * @param {number}   [months=6]     - Look-back window in calendar months.
+ * @param {number}   [maxSprints=6] - Maximum sprints to return.
+ * @returns {Object[]} Sorted array of sprint objects { id, name, state, boardId, startDate, endDate }.
+ */
+export function extractClosedSprints(issues, sprintField, months = 6, maxSprints = 6) {
+    const cutoff    = Date.now() - months * 30 * 24 * 60 * 60 * 1000;
+    const sprintMap = {};
+
+    for (const issue of issues) {
+        const sprints = issue.fields?.[sprintField];
+        if (!Array.isArray(sprints)) continue;
+        for (const s of sprints) {
+            if (s.state === 'closed' && s.id && s.endDate && new Date(s.endDate).getTime() >= cutoff) {
+                sprintMap[s.id] = s;
+            }
+        }
+    }
+
+    return Object.values(sprintMap)
+        .sort((a, b) => new Date(b.endDate) - new Date(a.endDate))
+        .slice(0, maxSprints);
+}
+

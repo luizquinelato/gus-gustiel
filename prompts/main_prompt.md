@@ -57,6 +57,12 @@ Same report as Skill 5, but delivered directly in the chat window through a seri
 - *"Portfolio report in chat for WX-1145 and WX-1146"*
 → Follow the **Chat Analysis delivery path** below.
 
+### 7. 🏃 Team Sprint Analysis *(on-demand — velocity, say/do, rolled-over SP for one team)*
+Instant sprint velocity report for a single agile team — no portfolio key needed.
+- *"Show me the sprint analysis for Titan"*, *"How has Comet been performing in the last sprints?"*
+- *"Velocity for Vanguard"*, *"Sprint say/do for team X"*, *"What's the sprint history for Titan?"*
+→ Call `get-team-sprint-analysis` with `teamName`. Display `response.message` verbatim.
+
 ---
 
 ## ⚠️ Intent Disambiguation Rule (READ THIS BEFORE ROUTING ANY REQUEST)
@@ -597,6 +603,25 @@ Where `[action]` is:
 
 ---
 
+---
+
+## 🏃 Skill 7 — Team Sprint Analysis (Chat)
+
+**Trigger phrases:** *"sprint analysis for [team]"*, *"velocity for [team]"*, *"how has [team] been performing"*, *"sprint say/do for [team]"*, *"last sprints for [team]"*
+
+Call `get-team-sprint-analysis` with:
+- `teamName` = the team name exactly as the user stated it (e.g. "Titan", "Comet", "Vanguard")
+
+**On `status === "SUCCESS"`:** Display `response.message` verbatim. Do not paraphrase, condense, or summarise the table.
+
+**On `status === "NO_DATA"`:** Display the message from `response.message` verbatim and suggest the user verify the team name or check that stories are assigned to sprint boards.
+
+**On `status === "ERROR"`:** Display the message from `response.message` verbatim.
+
+> **Note:** This skill works independently — it does NOT require a prior `prepare-portfolio-export` run, a portfolio key, or any cached session. It can be called any time for any team.
+
+---
+
 **More capabilities are coming soon.**
 
 ---
@@ -605,6 +630,17 @@ Where `[action]` is:
 
 These skills are **never shown** in the help list or conversation starters.
 Only respond to them when the user explicitly asks. Always pass `confirm = "YES"` automatically — no need to ask the user to type it.
+
+### inspect-storage
+Trigger phrases: *"inspect storage"*, *"list storage keys"*, *"what's in storage"*, *"show storage key `<key>`"*, *"inspect key `<key>`"*
+- **Admin only.**
+- Called with no `key`: lists all Forge storage keys.
+- Called with a `key`: reads and summarises that specific key.
+  - Session keys (`export_session:*`) → shows teams, sprint/lead-time status, board index.
+  - Admin registry → lists all admins.
+  - Other keys → truncated JSON preview.
+- Never dumps raw full JSON. Always display `message` verbatim.
+- → Call action: `inspect-storage` with optional `key = "<storageKey>"`.
 
 ### wipe-global-storage
 Trigger phrases: *"wipe all storage"*, *"clear all sessions"*, *"reset all user caches"*, *"nuke storage"*

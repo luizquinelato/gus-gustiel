@@ -83,14 +83,18 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
                     ...(epicParentKey ? [sessionKey(accountId, epicParentKey)] : []),
                     sessionKey(accountId, portfolioKey),
                 ];
-                let cached = null;
+                // Read all candidate sessions up-front
+                const sessions = [];
                 for (const sk of sessionKeys) {
-                    const candidate = await storage.get(sk);
-                    if (candidate?.phase === 'complete' && (Date.now() - candidate.timestamp) < 86_400_000) {
-                        cached = candidate;
-                        break;
-                    }
+                    const s = await storage.get(sk);
+                    if (s) sessions.push(s);
                 }
+                // Sprint data: take from the first session that has it, regardless of age
+                const sprintSession = sessions.find(s => s.sprintsByTeam);
+                if (sprintSession) sprintsByTeamE = sprintSession.sprintsByTeam;
+
+                // LCT data: only from a recent, complete session
+                const cached = sessions.find(s => s.phase === 'complete' && (Date.now() - s.timestamp) < 86_400_000) || null;
                 if (cached) {
                     lctReadyE = true;
                     const v = cached.velocityByTeam?.[epicTeam];
@@ -101,7 +105,6 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
                     }
                     if (cached.lctByTeam?.[epicTeam]) teamStatsE[epicTeam].lct = cached.lctByTeam[epicTeam];
                     teamStatsE._overall = cached.overallVelocity || null;
-                    sprintsByTeamE      = cached.sprintsByTeam   || null;
                 }
             } catch (_) { /* LCT will show "No data" */ }
         }
@@ -347,6 +350,9 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
             // Per-user session written by calculate-lead-time-data
             const cached = await storage.get(sessionKey(accountId, portfolioKey));
 
+            // Sprint data: always read — historical metrics don't expire after 24h
+            if (cached?.sprintsByTeam) sprintsByTeam = cached.sprintsByTeam;
+
             if (cached && cached.phase === 'complete' && (Date.now() - cached.timestamp) < LCT_CACHE_TTL_MS) {
                 lctReady = true;
                 // Populate Innovation Velocity from session
@@ -370,7 +376,6 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
                         }
                     }
                 }
-                sprintsByTeam = cached.sprintsByTeam || null;
             }
         } catch (_storageErr) {
             // Storage read failure — velocity and LCT will show "No data" via formatter.
@@ -549,7 +554,18 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
         for (const key of allKeys) {
             try {
                 const cached = await storage.get(sessionKey(accountId, key));
-                if (cached?.phase !== 'complete' || (Date.now() - cached.timestamp) >= LCT_TTL) continue;
+                if (!cached) continue;
+
+                // Sprint data: always read — historical metrics don't expire after 24h
+                if (cached.sprintsByTeam) {
+                    sprintsByTeam = sprintsByTeam || {};
+                    for (const [team, data] of Object.entries(cached.sprintsByTeam)) {
+                        if (!sprintsByTeam[team]) sprintsByTeam[team] = data;
+                    }
+                }
+
+                // LCT data: only from recent, complete sessions
+                if (cached.phase !== 'complete' || (Date.now() - cached.timestamp) >= LCT_TTL) continue;
                 lctReady = true;
                 for (const team of allTeams) {
                     const v = cached.velocityByTeam?.[team];
@@ -563,13 +579,6 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
                         teamStats[team].lct = cached.lctByTeam[team];
                 }
                 if (cached.overallVelocity) { combinedDays += cached.overallVelocity.averageDays * cached.overallVelocity.epicCount; combinedCount += cached.overallVelocity.epicCount; }
-                // Merge sprint data — first key wins per team (keys are independent portfolios)
-                if (cached.sprintsByTeam) {
-                    sprintsByTeam = sprintsByTeam || {};
-                    for (const [team, data] of Object.entries(cached.sprintsByTeam)) {
-                        if (!sprintsByTeam[team]) sprintsByTeam[team] = data;
-                    }
-                }
             } catch (_) {}
         }
         if (combinedCount > 0) teamStats._overall = { averageDays: Math.round(combinedDays / combinedCount), epicCount: combinedCount };
