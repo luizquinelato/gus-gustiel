@@ -29,7 +29,7 @@ function Deploy-Forge {
     if (-not $isProd) {
         Write-Host "   Agent name: [DEV] Gustiel (Portfolio Sentinel)" -ForegroundColor Yellow
         (Get-Content manifest.yml) `
-            -replace 'name: Gustiel \(Portfolio Sentinel\)', 'name: "[DEV] Gustiel (Portfolio Sentinel)"' `
+            -replace 'name: Gustiel \(Portfolio Sentinel\)', 'name: "[DEV] Gustiel"' `
             | Set-Content manifest.yml
     }
 
