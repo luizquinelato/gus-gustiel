@@ -42,18 +42,26 @@ function Deploy-Forge {
         }
         Write-Host "OK: Deploy complete" -ForegroundColor Green
 
-        # Upgrade Jira
-        Write-Host ">> Upgrading Jira..." -ForegroundColor Cyan
+        # Install or upgrade Jira
+        Write-Host ">> Installing/upgrading Jira..." -ForegroundColor Cyan
         forge install --upgrade --site $SITE --environment $ForgeEnv --product Jira --confirm-scopes --non-interactive
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "WARN: Jira upgrade exited $LASTEXITCODE -- run 'forge install --upgrade' manually if needed." -ForegroundColor Yellow
+            Write-Host "   No existing install found -- running fresh install for Jira..." -ForegroundColor Yellow
+            forge install --site $SITE --environment $ForgeEnv --product Jira --confirm-scopes --non-interactive
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "WARN: Jira install exited $LASTEXITCODE -- run 'forge install' manually if needed." -ForegroundColor Yellow
+            }
         }
 
-        # Upgrade Confluence
-        Write-Host ">> Upgrading Confluence..." -ForegroundColor Cyan
+        # Install or upgrade Confluence
+        Write-Host ">> Installing/upgrading Confluence..." -ForegroundColor Cyan
         forge install --upgrade --site $SITE --environment $ForgeEnv --product Confluence --confirm-scopes --non-interactive
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "WARN: Confluence upgrade exited $LASTEXITCODE -- run 'forge install --upgrade' manually if needed." -ForegroundColor Yellow
+            Write-Host "   No existing install found -- running fresh install for Confluence..." -ForegroundColor Yellow
+            forge install --site $SITE --environment $ForgeEnv --product Confluence --confirm-scopes --non-interactive
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "WARN: Confluence install exited $LASTEXITCODE -- run 'forge install' manually if needed." -ForegroundColor Yellow
+            }
         }
 
         Write-Host "OK: $label fully deployed and upgraded!" -ForegroundColor Green
