@@ -125,6 +125,50 @@ src/
 
 ---
 
+## Response Reuse Pattern
+
+### Principle
+
+Gustiel resolvers return **rich, structured responses** — more fields than the primary use case strictly requires. This lets Rovo answer a family of related questions from a single action call, without creating separate thin GET resolvers for every possible follow-up.
+
+This is a deliberate design choice. Rovo is an LLM — it can read a structured JSON response and extract exactly what the user asked for, whether that is the full formatted table, just a list of names, or a single ID field.
+
+### Rule
+
+> **Before creating a new resolver or action, ask: does an existing resolver already retrieve this data as part of its normal work?**
+> If yes, add the field to that resolver's response and document it in the prompt. Do not create a new action.
+
+### Current examples
+
+| Question | Action called | Field used |
+|---|---|---|
+| "Show sprint velocity for Titan" | `get-team-sprint-analysis` | `response.message` (pre-formatted table) |
+| "List the past sprint names for Titan" | `get-team-sprint-analysis` | `response.sprints[].name` |
+| "What board is Titan on?" | `get-team-sprint-analysis` | `response.board`, `response.boardId` |
+| "What's the board ID for Warriors?" | `get-team-sprint-analysis` | `response.boardId` |
+
+All four questions use the same action. The resolver fetches and parses the data once; Rovo selects the relevant field for each question type.
+
+### How to implement correctly
+
+1. **Resolver** — return all fields the ETL pipeline already computed, not just those used by `response.message`.
+2. **Prompt routing section** — document every response field by name and describe which user questions map to it. Example:
+   ```
+   response.message   → full sprint table (display verbatim)
+   response.boardId   → answer "what board is X on?" or "board ID for X?"
+   response.sprints[].name → answer "list sprint names for X"
+   ```
+3. **Skill description in the prompt help list** — mention the derived question types alongside the primary use case so users discover them.
+4. **Skill Documentation export** — include the derived capabilities in the trigger phrase list for that skill section.
+
+### Anti-patterns to avoid
+
+- ❌ Creating a `get-board-id` resolver that only calls `discoverBoardIdForTeam` and returns one field — the existing sprint resolver already does this work.
+- ❌ Returning only `message` from a resolver when the underlying data has richer structure that users may ask about.
+- ❌ Documenting only the primary trigger phrases in the prompt, leaving derived questions unrouted (Rovo will either fail silently or call the wrong action).
+
+---
+
 ## Rules for New Features
 
 1. **New data from Jira?** → Add a function to `extractors/jira-extractor.js`.
