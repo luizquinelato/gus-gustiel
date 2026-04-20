@@ -31,7 +31,7 @@ Use **Semantic Versioning (MAJOR.MINOR.PATCH)**:
 ## ETL Architecture Rule
 
 The codebase follows a strict **ETL (Extract → Transform → Load)** pattern.
-Full details are in `doc/architecture.md`. This rule summarises what the agent must enforce.
+Full details are in `docs/architecture.md`. This rule summarises what the agent must enforce.
 
 ### Layer ownership — never cross these boundaries
 
@@ -53,4 +53,30 @@ Full details are in `doc/architecture.md`. This rule summarises what the agent m
 5. **New workflow status** → edit `src/config/constants.js` only. No resolver changes needed.
 6. **Never duplicate logic** — if a second resolver needs the same extraction, transformation, or formatting function, it imports from the existing layer file. Do not copy-paste.
 7. **All extractor, transformer, and formatter functions must be pure** (stateless, no side effects) so they are safe under any concurrency level and fully testable in isolation.
+
+---
+
+## Portfolio-as-Master-Layer Rule
+
+**The portfolio is the highest consolidating layer.** Every individual skill (sprint analysis, lead/cycle time, throughput) must be implementable both as a standalone capability AND as a building block consumed by the portfolio layer. This is not optional — it is the reason the ETL architecture exists.
+
+### What this means in practice
+
+- **Individual skills are real, standalone features.** A user can call "sprint analysis for Team X" without any portfolio context. The resolver works end-to-end on its own.
+- **The portfolio layer reuses those same functions.** When the portfolio pipeline needs sprint data for all teams, it calls the exact same underlying extractor/transformer functions that power the individual sprint skill. There is never a separate implementation for "portfolio sprint" vs "individual sprint".
+- **New capabilities follow this order:** first build the individual skill correctly within ETL layers; then wire it into the portfolio resolver. Never build a portfolio-only capability that has no individual equivalent.
+- **The portfolio resolver is the master consolidator** — it is the only place where data from multiple skills (LCT, sprint, hierarchy) is combined into a single report. No other resolver does cross-skill aggregation.
+
+### The hierarchy
+
+```
+Portfolio Report (master layer)
+  ├─ LCT / Innovation Velocity  ← lead-time-resolver + portfolio-transformer
+  ├─ Sprint Velocity per team   ← sprint-extractor (same functions as Team Sprint skill)
+  └─ Hierarchy + RYG            ← jira-extractor + portfolio-transformer
+        ↑
+Individual Skills (building blocks)
+  ├─ Team Sprint Analysis       → sprint-extractor.js
+  └─ (future: cycle time, throughput, forecast → same ETL chain)
+```
 

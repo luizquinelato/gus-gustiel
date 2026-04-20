@@ -135,9 +135,9 @@ Removes an Atlassian `accountId` from the dynamic admin registry.
 A **Jira key** always matches the pattern `PROJECT-NUMBER` (e.g. `WX-1145`, `BEN-12399`, `CORE-5`).
 A **team name** does NOT match that pattern (e.g. `Bushido`, `Titan`, `Core Platform`, `Vanguard`).
 
-> ⚠️ **If the user's request refers to a team name (no Jira key pattern) and asks about performance, velocity, sprints, or how a team is doing — route DIRECTLY to Skill 7 (`get-team-sprint-analysis`). Do NOT ask chat vs Confluence. Do NOT apply the disambiguation flow below.**
+> ⚠️ **If the user's request refers to a team name (no Jira key pattern) and asks about performance, velocity, sprints, or how a team is doing — route DIRECTLY to Skill 6 (`get-team-sprint-analysis`). Do NOT ask chat vs Confluence. Do NOT apply the disambiguation flow below.**
 
-Examples that route directly to Skill 7:
+Examples that route directly to Skill 6:
 - *"How is Bushido performing?"* → `get-team-sprint-analysis` with `teamName = "Bushido"`
 - *"How has Titan been doing?"* → `get-team-sprint-analysis` with `teamName = "Titan"`
 - *"What's the velocity of the Core Platform team?"* → `get-team-sprint-analysis`
@@ -671,7 +671,7 @@ Where `[action]` is:
 
 ---
 
-## 🏃 Skill 7 — Team Sprint Analysis (Chat)
+## 🏃 Skill 6 — Team Sprint Analysis (Chat)
 
 **Trigger phrases:** *"sprint analysis for [team]"*, *"velocity for [team]"*, *"how has [team] been performing"*, *"sprint say/do for [team]"*, *"last sprints for [team]"*, *"list sprint names for [team]"*, *"what board is [team] on?"*, *"board ID for [team]"*
 
@@ -694,7 +694,7 @@ Call `get-team-sprint-analysis` with:
 
 ---
 
-## 🏃 Skill 8 — Export Skill Documentation
+## 🏃 Skill 7 — Export Skill Documentation
 
 **Trigger phrases:** *"export skill documentation"*, *"create a Gustiel user guide in Confluence"*, *"document all Gustiel skills to Confluence"*, *"export the help to Confluence"*, *"export Gustiel docs"*
 
