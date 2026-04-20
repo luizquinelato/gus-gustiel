@@ -24,7 +24,7 @@ import { storage }                                                from '@forge/a
 import { getEnvFromJira, searchJira,
          getCurrentAccountId }                                    from '../services/jira-api-service.js';
 import { PORTFOLIO_WORKFLOWS, ANALYSIS_TEAMS_PER_PAGE,
-         ANALYSIS_LCT_TEAMS_PER_PAGE }                            from '../config/constants.js';
+         ANALYSIS_LCT_TEAMS_PER_PAGE, makeSessionKey }            from '../config/constants.js';
 import { extractItem, extractItemScope }                          from '../extractors/jira-extractor.js';
 import { groupByStatusOrdered, buildCountMap,
          filterOverdue }                                          from '../transformers/portfolio-transformer.js';
@@ -32,9 +32,6 @@ import { formatProgress, formatStatusTable,
          formatStoryStatusTable, formatInitiativeTable,
          formatEpicsByTeam, formatInnovationVelocityByTeam,
          formatLCTSection, EPIC_RYG_LEGEND }                      from '../formatters/markdown-formatter.js';
-
-const sessionKey = (accountId, portfolioKey) =>
-    `export_session:${accountId}:${portfolioKey}`;
 
 // ── Build teamStats object from session cache ─────────────────────────────────
 function buildTeamStats(allTeams, epics, storyCountByEpic, session, lctReady) {
@@ -76,7 +73,7 @@ export const chatAnalysisSection = async (event) => {
 
     // ── Read session cache ────────────────────────────────────────────────────
     let session = null;
-    try { session = await storage.get(sessionKey(accountId, portfolioKey)); } catch (_) {}
+    try { session = await storage.get(makeSessionKey(accountId, portfolioKey)); } catch (_) {}
 
     const lctReady         = session?.phase === 'complete' && !!session.lctByTeam;
     const storyCountByEpic = session?.storyCountByEpic || {};

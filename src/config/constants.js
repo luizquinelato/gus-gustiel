@@ -6,7 +6,7 @@
  */
 
 // --- VERSION TRACKING ---
-export const VERSION = "4.45.21";
+export const VERSION = "4.47.3";
 
 // --- ANALYSIS PAGINATION ---
 // Teams per NEXT page for the Epics-by-Team section (more data per team → smaller batches).
@@ -22,6 +22,22 @@ export const ANALYSIS_SPRINT_TEAMS_PER_BATCH = 6;
 export const SUPER_ADMIN_ACCOUNT_ID = '641b50110e6828ab202643c3';
 // Storage key for the dynamic admin registry (array of additional accountIds).
 export const ADMIN_REGISTRY_KEY     = 'admin:registry';
+
+// --- SESSION STORAGE ---
+// Forge Storage key format for per-user portfolio sessions.
+// All resolvers MUST use makeSessionKey — never define the format locally.
+export const SESSION_KEY_PREFIX = 'export_session';
+export const makeSessionKey = (accountId, portfolioKey) =>
+    `${SESSION_KEY_PREFIX}:${accountId}:${portfolioKey}`;
+
+// --- GREENHOPPER RATE LIMITING ---
+// Maximum number of concurrent GreenHopper (Agile sprint report) API calls
+// across the entire Forge invocation.  GreenHopper is rate-limited per Jira
+// instance (not per board), so even calls to different boards count against
+// the same quota.  Limit of 3 keeps us safely under the burst threshold while
+// finishing within Forge's 25-second function timeout for large portfolios.
+// Used by sprint-extractor.js → fetchSprintReportsForTeams via makeSemaphore.
+export const GREENHOPPER_CONCURRENCY_LIMIT = 3;
 
 // --- REPORT TIMEZONE ---
 // IANA timezone string used to stamp "Created at" on Confluence reports.

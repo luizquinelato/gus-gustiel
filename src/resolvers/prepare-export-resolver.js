@@ -15,73 +15,15 @@
  * any Jira queries.
  */
 
-import { storage }                                        from '@forge/api';
+import { storage }                                           from '@forge/api';
 import { getEnvFromJira, searchJira,
-         getCurrentAccountId }                             from '../services/jira-api-service.js';
-import { PORTFOLIO_WORKFLOWS }                            from '../config/constants.js';
+         getCurrentAccountId }                                from '../services/jira-api-service.js';
+import { PORTFOLIO_WORKFLOWS, makeSessionKey }                from '../config/constants.js';
 import { extractItem, extractStoryStatus, chunk,
-         extractItemScope }                               from '../extractors/jira-extractor.js';
-import { buildCountMap }                                  from '../transformers/portfolio-transformer.js';
-
-const sessionKey = (accountId, portfolioKey) =>
-    `export_session:${accountId}:${portfolioKey}`;
-
-/**
- * Scan raw story issues and return the newest sprint ID seen per team.
- * Used by Step 3 (calculate-sprint-data) to locate each team's board.
- *
- * @param {Array}  rawStories    - Raw Jira issue objects (must include sprint + parent fields)
- * @param {string} sprintField   - Custom field ID for sprint (e.g. 'customfield_10020')
- * @param {Object} epicKeyToTeam - Map of epicKey → agileTeamName
- * @returns {Object} { [teamName]: { id, name, endDate, startDate } }
- */
-function extractNewestSprintIdByTeam(rawStories, sprintField, epicKeyToTeam) {
-    const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
-    const sixMonthsAgo  = Date.now() - SIX_MONTHS_MS;
-
-    // First pass: collect all unique sprints per team
-    const raw = {}; // { [team]: { sprintMap: { [id]: sprint }, newest: sprint|null } }
-    for (const issue of rawStories) {
-        const sprints = issue.fields?.[sprintField];
-        if (!Array.isArray(sprints) || sprints.length === 0) continue;
-
-        const team = epicKeyToTeam[issue.fields?.parent?.key];
-        if (!team) continue;
-
-        if (!raw[team]) raw[team] = { sprintMap: {}, newest: null };
-
-        for (const s of sprints) {
-            if (!s.id || s.state === 'future') continue;
-            raw[team].sprintMap[s.id] = s; // dedup by sprint id
-
-            // Track the most recent non-future sprint for boardId + fallback info
-            const sDate   = new Date(s.endDate || s.startDate).getTime();
-            const curDate  = raw[team].newest ? new Date(raw[team].newest.endDate || raw[team].newest.startDate).getTime() : 0;
-            if (sDate > curDate) raw[team].newest = s;
-        }
-    }
-
-    // Second pass: build final result with pre-filtered recentClosedSprints
-    const result = {};
-    for (const [team, data] of Object.entries(raw)) {
-        if (!data.newest) continue;
-
-        const recentClosedSprints = Object.values(data.sprintMap)
-            .filter(s => s.state === 'closed' && s.endDate && new Date(s.endDate).getTime() >= sixMonthsAgo)
-            .sort((a, b) => new Date(b.endDate) - new Date(a.endDate))
-            .slice(0, 6);
-
-        result[team] = {
-            id:                  data.newest.id,
-            name:                data.newest.name,
-            endDate:             data.newest.endDate,
-            startDate:           data.newest.startDate,
-            boardId:             data.newest.boardId || null,
-            recentClosedSprints,
-        };
-    }
-    return result;
-}
+         extractItemScope }                                   from '../extractors/jira-extractor.js';
+import { buildCountMap }                                      from '../transformers/portfolio-transformer.js';
+import { extractNewestSprintIdByTeam,
+         enrichTeamSprintListsFromBoardApi }                  from '../extractors/sprint-extractor.js';
 
 export const preparePortfolioExport = async (event) => {
     // portfolioKeys (comma-separated) enables multi-key mode; falls back to portfolioKey.
@@ -158,11 +100,12 @@ export const preparePortfolioExport = async (event) => {
             storyCountByEpic, storyStatusSummary,
             newestSprintIdByTeam: newestSprintIdByTeamE,
         };
+        await enrichTeamSprintListsFromBoardApi(newestSprintIdByTeamE);
         for (const k of allKeys) {
             try {
-                const prev = await storage.get(sessionKey(accountId, k)).catch(() => null);
+                const prev = await storage.get(makeSessionKey(accountId, k)).catch(() => null);
                 const toSave = prev?.sprintsByTeam ? { ...sessionData, sprintsByTeam: prev.sprintsByTeam } : sessionData;
-                await storage.set(sessionKey(accountId, k), toSave);
+                await storage.set(makeSessionKey(accountId, k), toSave);
             }
             catch (storeErr) { return { status: 'ERROR', message: `Failed to save session data for ${k}: ${storeErr.message}` }; }
         }
@@ -218,11 +161,12 @@ export const preparePortfolioExport = async (event) => {
             storyCountByEpic: storyCountByEpicI, storyStatusSummary: storyStatusSummaryI,
             newestSprintIdByTeam: newestSprintIdByTeamI,
         };
+        await enrichTeamSprintListsFromBoardApi(newestSprintIdByTeamI);
         for (const k of allKeys) {
             try {
-                const prev = await storage.get(sessionKey(accountId, k)).catch(() => null);
+                const prev = await storage.get(makeSessionKey(accountId, k)).catch(() => null);
                 const toSave = prev?.sprintsByTeam ? { ...sessionDataI, sprintsByTeam: prev.sprintsByTeam } : sessionDataI;
-                await storage.set(sessionKey(accountId, k), toSave);
+                await storage.set(makeSessionKey(accountId, k), toSave);
             }
             catch (storeErr) { return { status: 'ERROR', message: `Failed to save session data for ${k}: ${storeErr.message}` }; }
         }
@@ -313,11 +257,12 @@ export const preparePortfolioExport = async (event) => {
         newestSprintIdByTeam,
     };
 
+    await enrichTeamSprintListsFromBoardApi(newestSprintIdByTeam);
     for (const k of allKeys) {
         try {
-            const prev   = await storage.get(sessionKey(accountId, k)).catch(() => null);
+            const prev   = await storage.get(makeSessionKey(accountId, k)).catch(() => null);
             const toSave = prev?.sprintsByTeam ? { ...sessionData, sprintsByTeam: prev.sprintsByTeam } : sessionData;
-            await storage.set(sessionKey(accountId, k), toSave);
+            await storage.set(makeSessionKey(accountId, k), toSave);
         } catch (storeErr) {
             return { status: 'ERROR', message: `Failed to save session data for ${k}: ${storeErr.message}` };
         }

@@ -585,7 +585,26 @@ export function formatSprintSection(allTeams, sprintsByTeam) {
             continue;
         }
 
+        // All sprint reports failed (GreenHopper unavailable) — skip the all-dash table,
+        // show the sprint names that were found and suggest a retry.
         const validSprints = data.sprints.filter(s => !s.error);
+        if (validSprints.length === 0) {
+            const names = data.sprints.map(s => `- \`${s.name || s.id}\``).join('\n');
+            const count = data.sprints.length;
+            sections.push([
+                header,
+                `> ⚠️ Sprint data could not be loaded — the sprint board API was unavailable when reports were fetched.`,
+                ``,
+                `**${count} sprint${count === 1 ? '' : 's'} detected (no metrics loaded):**`,
+                names,
+                ``,
+                `> _Re-run \`calculate-sprint-data\` to retry and load metrics._`,
+                '',
+                '---',
+                '',
+            ].join('\n'));
+            continue;
+        }
         let summary = '';
         let reEstimNote = '';
         if (validSprints.length > 0) {
@@ -655,21 +674,42 @@ export function formatTeamEfficiencyTable(allTeams, teamStats) {
  *
  * @param {string}   teamName  - Display name of the agile team.
  * @param {string}   boardName - Board name resolved via getBoardById().
+ * @param {string}   boardId   - Numeric board ID (for reference and debugging).
  * @param {Object[]} sprints   - Array produced by parseGreenHopperSprintReport().
  * @returns {string} Markdown string ready for Rovo chat output.
  */
-export function formatTeamSprintChat(teamName, boardName, sprints) {
+export function formatTeamSprintChat(teamName, boardName, boardId, sprints) {
     if (!sprints || sprints.length === 0) {
         return `## 🏃 Sprint Analysis — ${teamName}\n\n_No sprint data available for the last 6 months._`;
+    }
+
+    // All sprint reports failed — list the sprint names found and skip the all-dash table.
+    const validSprints = sprints.filter(s => !s.error);
+    if (validSprints.length === 0) {
+        const boardLabel = boardName ? `${boardName} *(ID: ${boardId})*` : (boardId ? `Board ID: ${boardId}` : '');
+        const boardLine  = boardLabel ? `\n> 📋 **Board:** ${boardLabel}` : '';
+        const names      = sprints.map(s => `- \`${s.name || s.id}\``).join('\n');
+        const count      = sprints.length;
+        return [
+            `## 🏃 Sprint Analysis — ${teamName}${boardLine}`,
+            ``,
+            `> ⚠️ Sprint reports could not be loaded — the sprint board API was unavailable when data was fetched.`,
+            ``,
+            `**${count} sprint${count === 1 ? '' : 's'} detected (no metrics loaded):**`,
+            names,
+            ``,
+            `_Ask me to re-run the sprint analysis for ${teamName} to try again._`,
+        ].join('\n');
     }
 
     const spCell = (sp, noSp) => noSp > 0
         ? `${sp} SP _(${noSp} item${noSp === 1 ? '' : 's'} w/o SP)_`
         : `${sp} SP`;
 
+    const boardLabel = boardName ? `${boardName} *(ID: ${boardId})*` : (boardId ? `Board ID: ${boardId}` : '');
     const lines = [
         `## 🏃 Sprint Analysis — ${teamName}`,
-        boardName ? `> 📋 **Board:** ${boardName}` : '',
+        boardLabel ? `> 📋 **Board:** ${boardLabel}` : '',
         '',
         '| Sprint | Planned | Added | Removed | ✅ Velocity | 🔄 Rolled Over | Say/Do |',
         '|--------|:-------:|:-----:|:-------:|:-----------:|:--------------:|:------:|',
@@ -684,7 +724,7 @@ export function formatTeamSprintChat(teamName, boardName, sprints) {
         lines.push(`| **${s.name}** | ${spCell(s.planned, s.plannedNoSp)} | ${spCell(s.added, s.addedNoSp)} | ${spCell(s.removed, s.removedNoSp)} | **${spCell(s.completed, s.velocityNoSp)}** | ${spCell(s.rolledOver, s.rolledOverNoSp)} | ${sd} |`);
     }
 
-    const validSprints = sprints.filter(s => !s.error);
+    // validSprints already computed above (at least 1 exists — all-failed path returned early)
     if (validSprints.length > 0) {
         const avgVelocity = Math.round(validSprints.reduce((a, s) => a + s.completed, 0) / validSprints.length);
         const avgSayDo    = validSprints.reduce((a, s) => a + s.sayDo, 0) / validSprints.length;

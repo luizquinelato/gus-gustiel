@@ -3,7 +3,8 @@
  *
  * Hidden maintenance + admin-management skills:
  *
- *   inspectStorage     — lists all storage keys or reads a specific key (admin only).
+ *   inspectStorage     — lists/reads storage keys. Non-admins see only their own session keys;
+ *                        admins see all keys.
  *   wipeGlobalStorage  — deletes ALL session entries for ALL users (admin only). Admin registry preserved.
  *   wipeUserStorage    — deletes the requesting user's own session entries (any user).
  *   addAdmin           — adds an accountId to the dynamic admin registry (super-admin only).
@@ -21,7 +22,8 @@
  */
 
 import { storage, startsWith } from '@forge/api';
-import { SUPER_ADMIN_ACCOUNT_ID, ADMIN_REGISTRY_KEY } from '../config/constants.js';
+import { SUPER_ADMIN_ACCOUNT_ID, ADMIN_REGISTRY_KEY,
+         SESSION_KEY_PREFIX }                         from '../config/constants.js';
 import { getCurrentAccountId } from '../services/jira-api-service.js';
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -96,7 +98,7 @@ function summarizeStorageValue(key, value) {
                 entries.map(e => `- \`${e.accountId}\` — ${e.displayName || '(no name)'} — ${e.emailAddress || '(no email)'}`).join('\n'));
     }
 
-    if (key.startsWith('export_session:')) {
+    if (key.startsWith(`${SESSION_KEY_PREFIX}:`)) {
         const portfolioKey = key.split(':')[2] || '?';
         const lines = [`📦 **Session: ${portfolioKey}**`];
 
@@ -190,12 +192,51 @@ export const inspectStorage = async (event) => {
     const accountId = await getCurrentAccountId(event);
     const key       = (event?.payload?.key || event?.key || '').trim();
 
-    if (!accountId || !(await isAdmin(accountId))) {
-        return { status: 'ERROR', message: '🚫 **Access denied.** This action is restricted to Gustiel administrators.' };
+    if (!accountId) {
+        return { status: 'ERROR', message: '🚫 Could not determine your account ID.' };
     }
 
+    const admin      = await isAdmin(accountId);
+    const userPrefix = `${SESSION_KEY_PREFIX}:${accountId}:`;
+
+    // ── Non-admin path: read-only access to own session keys only ─────────────
+    if (!admin) {
+        try {
+            if (key) {
+                if (!key.startsWith(userPrefix)) {
+                    return { status: 'ERROR', message: '🚫 **Access denied.** You can only inspect your own session keys.\n\n_Tip: Use **"Inspect my storage"** (no key) to list your sessions, or **"What is my account ID?"** to confirm your ID._' };
+                }
+                const value = await storage.get(key);
+                if (value === undefined || value === null) {
+                    return { status: 'NOT_FOUND', message: `🔍 Key \`${key}\` does not exist in storage.` };
+                }
+                return { status: 'SUCCESS', key, message: summarizeStorageValue(key, value) };
+            }
+
+            // No key — list only the caller's own session keys
+            const result  = await storage.query().where('key', startsWith(userPrefix)).getMany();
+            const entries = result?.results || [];
+            if (entries.length === 0) {
+                return { status: 'SUCCESS', message: `🗂️ **Your session storage** — no cached sessions found.\n\n_Tip: Run a portfolio export or analysis to create a session._` };
+            }
+            const lines = entries.map(({ key: k, value: v }) => {
+                const portfolioKey = k.split(':')[2] || '?';
+                const phase        = v?.phase || 'unknown';
+                const teams        = (v?.allTeams || []).length;
+                return `- \`${k}\`\n  → **${portfolioKey}** · phase: \`${phase}\` · ${teams} team(s)`;
+            });
+            return {
+                status:  'SUCCESS',
+                count:   entries.length,
+                message: `🗂️ **Your session storage (${entries.length} session${entries.length === 1 ? '' : 's'}):**\n${lines.join('\n')}\n\n_Tip: Ask me to "inspect storage key \`<key>\`" to see full details._`,
+            };
+        } catch (err) {
+            return { status: 'ERROR', message: `Storage inspection failed: ${err.message}` };
+        }
+    }
+
+    // ── Admin path: full access to all keys ───────────────────────────────────
     try {
-        // Read a specific key
         if (key) {
             const value = await storage.get(key);
             if (value === undefined || value === null) {
@@ -223,7 +264,7 @@ export const inspectStorage = async (event) => {
         return {
             status:  'SUCCESS',
             count:   keys.length,
-            message: `🗄️ **Storage keys (${keys.length}):**\n${lines.join('\n')}\n\n_Tip: ask me to "inspect storage key \`<key>\`" to see its contents._`,
+            message: `🗄️ **All storage keys (${keys.length}):**\n${lines.join('\n')}\n\n_Tip: Ask me to "inspect storage key \`<key>\`" to see its contents._`,
         };
     } catch (err) {
         return { status: 'ERROR', message: `Storage inspection failed: ${err.message}` };
@@ -254,7 +295,7 @@ export const wipeUserStorage = async (event) => {
     if (confirm !== 'YES') return { status: 'ERROR', message: '⚠️ Please confirm with `confirm = "YES"` and try again.' };
 
     try {
-        const deleted = await deleteAllMatchingKeys(`export_session:${accountId}:`);
+        const deleted = await deleteAllMatchingKeys(`${SESSION_KEY_PREFIX}:${accountId}:`);
         return { status: 'SUCCESS', deleted, message: `🗑️ **Your storage has been cleared.** ${deleted} session entr${deleted === 1 ? 'y' : 'ies'} deleted.${deleted === 0 ? ' (Nothing to clear — no cached sessions found.)' : ''}` };
     } catch (err) {
         return { status: 'ERROR', message: `Storage wipe failed: ${err.message}` };

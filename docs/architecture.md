@@ -1,4 +1,4 @@
-# Gustiel — Architecture Guide (v4.43.03)
+# Gustiel — Architecture Guide (v4.47.3)
 
 ## Overview
 
@@ -13,34 +13,40 @@ The resolver is only the entry/exit door — it never contains business logic.
 ```
 src/
 ├── config/
-│   └── constants.js               # Versions, workflow dicts, field IDs — no logic
+│   └── constants.js               # Version, workflow dicts, field IDs, makeSessionKey — no logic
 │
 ├── services/
 │   ├── jira-api-service.js        # Raw HTTP I/O — the ONLY layer that calls Jira
 │   └── confluence-api-service.js  # Confluence page CRUD, folder + space resolution
 │
 ├── extractors/               # EXTRACT layer
-│   └── jira-extractor.js     # Raw API response → clean domain objects
+│   ├── jira-extractor.js     # Raw API response → clean domain objects
+│   └── sprint-extractor.js   # Sprint board discovery, GreenHopper fetch, shared semaphore
 │
 ├── transformers/             # TRANSFORM layer
 │   └── portfolio-transformer.js  # Pure calculations — no I/O, no rendering
 │
 ├── formatters/               # LOAD layer
-│   ├── markdown-formatter.js      # Domain data → Markdown (chat output)
-│   └── confluence-formatter.js    # Markdown → Confluence Storage Format (XHTML)
+│   ├── markdown-formatter.js      # Domain data → Markdown (chat + Confluence section bodies)
+│   └── confluence-formatter.js    # Markdown → Confluence Storage Format (XHTML); custom table colspan
 │
 ├── resolvers/                # Entry/Exit handlers — thin orchestrators only
 │   ├── portfolio-report-resolver.js   # Full ETL report (summary + team pages); multi-key Isolated/Merged
 │   ├── confluence-export-resolver.js  # Confluence export (single or combined page); scope-aware
-│   ├── prepare-export-resolver.js     # ETL step 1 — team discovery; multi-key (one session/key)
+│   ├── prepare-export-resolver.js     # ETL step 1 — team + sprint board discovery
 │   ├── lead-time-resolver.js          # ETL step 2 — LCT batched changelog query
+│   ├── sprint-data-resolver.js        # ETL step 3 — GreenHopper sprint reports per team
+│   ├── team-sprint-resolver.js        # Individual team sprint analysis (chat); returns boardId
 │   ├── check-cache-resolver.js        # ETL cache state probe; scope detection
+│   ├── skill-docs-resolver.js         # Export Skill Documentation to Confluence
+│   ├── storage-admin-resolver.js      # Admin: full storage access; users: own sessions only
 │   ├── portfolio-analysis-resolver.js # Analysis / Q&A skills; multi-key Isolated/Merged
 │   ├── system-resolver.js
 │   └── creator-resolver.js
 │
 └── utils/
-    └── token-estimator.js    # fitWithinBudget() — used by summary phase
+    ├── token-estimator.js    # fitWithinBudget() — used by summary phase
+    └── concurrency.js        # makeSemaphore() — shared GreenHopper rate-limit primitive
 ```
 
 ---
@@ -53,10 +59,11 @@ src/
 - Returns raw API JSON — never interprets it.
 
 ### `extractors/` — Extract
-- Maps raw Jira JSON into clean **domain objects**.
+- Maps raw Jira JSON into clean **domain objects**. Also owns async extraction that coordinates service calls.
 - The only layer allowed to know Jira's raw field structure.
-- Functions: `extractItem(issue, envFields)`, `extractStoryStatus(issue)`, `extractItemScope(issue)`, `extractItemForLCT(issue, agileTeamField)`, `chunk(arr, n)`.
-- All functions are **pure** (no side effects, no I/O).
+- **`jira-extractor.js`** — Pure functions: `extractItem(issue, envFields)`, `extractStoryStatus(issue)`, `extractItemScope(issue)`, `extractItemForLCT(issue, agileTeamField)`, `chunk(arr, n)`.
+- **`sprint-extractor.js`** — Sprint-specific extraction (async). `extractNewestSprintIdByTeam(rawIssues, sprintField, epicKeyToTeam)` — pure; maps issue sprint fields to team board/sprint metadata. `enrichTeamSprintListsFromBoardApi(newestSprintIdByTeam, count, cutoffMs)` — async; replaces issue-derived sprint lists with authoritative Board API data. `discoverBoardIdForTeam(teamName, agileTeamFieldNum, sprintField)` — async; two-pass JQL boardId discovery for single-team analysis. `fetchSprintReportsForTeams(teams, newestSprintIdByTeam)` — async; fetches GreenHopper reports with shared semaphore rate-limiting; used by both the portfolio pipeline and individual sprint resolver.
+- All **pure** functions are stateless (no side effects, no I/O) and safe at any concurrency level.
 
 ### `transformers/` — Transform
 - Pure calculations and data shaping.
@@ -78,11 +85,14 @@ src/
   - `formatInnovationVelocityTable(teams, teamStats)`.
   - `formatInnovationVelocityByTeam(allTeams, teamStats, lctReady, velocityOnly)` — combined velocity + per-team bullet blocks. Pass `velocityOnly=true` to emit only the velocity legend, overall summary, and velocity table (no Lead/Cycle Time tables); used in the chat analysis resolver when the LCT section is rendered separately.
   - `formatLCTSection(allTeams, teamStats, lctReady, renderHeading)` — standalone Lead and Cycle Time section. Renders its own legend (Lead Time and Cycle Time definitions) at the top. When `renderHeading=true` (chat/default) emits a `### H3` heading and team sub-headings as `#### H4`; when `renderHeading=false` (Confluence, caller owns `## H2`) emits team sub-headings as `### H3` so Confluence TOC numbering is correct (5.1, 5.2… not 5.0.1, 5.0.2…).
+  - `formatSprintSection(allTeams, sprintsByTeam)` — Sprint Analysis H2 block for Confluence export. If all sprints for a team failed to load (GreenHopper unavailable), emits a sprint-name list with retry hint instead of an all-dash table. If some succeeded, keeps the table (partial data shown). If none found, emits a short info message.
+  - `formatTeamSprintChat(teamName, boardName, boardId, sprints)` — Sprint velocity table for chat. Same all-failed/partial/empty logic as `formatSprintSection`. Board name and numeric ID are shown in the board line.
 - **`confluence-formatter.js`** — Markdown → Confluence Storage Format (XHTML). Pure and stateless.
   - `buildTocMacro(minLevel, maxLevel)` — native Confluence TOC macro prepended to every exported page.
   - `buildAnchorMacro(anchorName)` — named anchor macro (default `"top"`) for `[⬆ Back to top](#top)` links.
   - `markdownToStorage(markdown)` — handles headings, blockquotes (consecutive `> ` lines merged into one `<blockquote>`), unordered lists, `<hr/>`, tables, and inline formatting.
   - `renderTable(headers, bodyRows)` — full-width Confluence table with variable colspan widths. `WIDE_HEADERS = { 'Start', 'Due' }` gives those columns (and always the first/Epic column) `colspan="2"` so they render at 2× the width of other columns. Virtual column count adjusts automatically.
+  - `buildCustomTable(headers, bodyRows, colspans)` — explicit per-column colspan control. Use when `renderTable` column widths are wrong (e.g., `[1, 1, 3]` for a narrow step column and a triple-wide description column). Supports the same inline Markdown as `markdownToStorage`.
   - `STATUS_BG` — map of exact Jira status names → background hex colours (Backlog = gray, Development = blue, Deployed to Production / Released = green).
   - `tdStyle(content)` — returns both `data-highlight-colour` (Confluence-native) and `style="background-color"` attributes for status cells, so colouring survives the Cloud API sanitiser.
   - `cellToHtml(content)` — splits on `↵` sentinel and wraps each part in its own `<p>` tag for multi-line cells.
@@ -97,12 +107,21 @@ src/
 - **`lead-time-resolver.js`** — ETL step 2. Reads session written by `prepare-export-resolver`, runs a combined Epic + Story changelog JQL query batched across multiple Forge invocations (returning `PARTIAL` until done). Finalises `lctByTeam`, `velocityByTeam`, `overallVelocity` and updates session to `phase: 'complete'`.
 - **`check-cache-resolver.js`** — Probes the session for a given key. Detects scope via `extractItemScope`. Returns `hasCachedData`, `phase`, `detectedScope`, `parentKey`, and `cachedAt` (formatted in `REPORT_TIMEZONE`). Treats sessions written by old code (no `detectedScope` field + empty `allTeams`) as stale.
 - **`creator-resolver.js`** — Static data only; no ETL pipeline. Exports `getAgentInfo` which returns the `GUSTIEL_CARD` constant. Called by the single `get-agent-info` action for both "Who are you?" and "Who is your creator?" questions. The card contains two image URL fields: `avatarImageUrl` (Gustiel's avatar shown inline at the top of the identity card) and `builtByImageUrl` (creator photo shown inline on the Built by line). Images are rendered as standard markdown `![alt](url)` — see **Image Rendering** section below.
+- **`sprint-data-resolver.js`** — ETL step 3. Reads the session written by `prepare-export-resolver`, calls `fetchSprintReportsForTeams` from `sprint-extractor.js` for all teams, writes `sprintsByTeam` back to the session. Returns `PARTIAL` while teams are being processed across multiple invocations, `SUCCESS` when complete, `NO_SESSION` when the session is missing.
+- **`team-sprint-resolver.js`** — Individual on-demand sprint analysis. Calls `discoverBoardIdForTeam` + `getRecentBoardClosedSprints` + `fetchSprintReportsForTeams` from the shared sprint extractor. Returns `{ status, team, board, boardId, sprints, message }` — `boardId` and `sprints[].name` allow Rovo to answer derived questions (board ID lookup, sprint name listing) without a separate skill.
+- **`skill-docs-resolver.js`** — Exports a comprehensive Confluence page documenting all Gustiel skills, usage examples, access levels, the ETL pipeline, Jira hierarchy support, and session cache. Uses `buildCustomTable` for explicit colspan control in the ETL and hierarchy tables. Same upsert/folder/path logic as `confluence-export-resolver`.
+- **`storage-admin-resolver.js`** — Multi-path storage management. Admins: list all keys, read any key, wipe all storage, manage the admin registry. Non-admins: list/read only their own `export_session:<accountId>:*` keys. Uses `makeSessionKey` prefix check as the security boundary. Uses `startsWith` from Forge Storage query API for efficient per-user key filtering.
+
+### `utils/` — Shared Primitives
+- **`token-estimator.js`** — `fitWithinBudget(sections, budget)` trims section array to stay within an LLM token budget. Used by the summary phase of the portfolio report resolver.
+- **`concurrency.js`** — `makeSemaphore(limit)` creates a counting semaphore for bounded concurrency. Used by `sprint-extractor.js` to limit parallel GreenHopper API calls (default: 3). Never define semaphore primitives inside a resolver — import from here.
 
 ### `config/constants.js` — Configuration
-- Single source of truth for version, workflow status dicts, and field IDs.
+- Single source of truth for version, workflow status dicts, field IDs, and the session key format.
 - Workflow statuses are **dicts** (not arrays): `{ order, category, specialCategory }`.
 - To change a status behaviour: edit the dict here only. No resolver logic to touch.
 - `TEAMS_PER_BATCH = 4` — controls how many teams auto-chain per user "next" before a mandatory pause (see Pagination Model below).
+- `makeSessionKey(accountId, portfolioKey)` — canonical Forge Storage key builder: `export_session:<accountId>:<portfolioKey>`. All resolvers import this; never define a local version.
 
 ---
 
@@ -114,6 +133,9 @@ src/
 4. **New Rovo action?** → Add a resolver that calls the three layers above. No logic inside.
 5. **New workflow status?** → Edit `config/constants.js` only. Zero other changes needed.
 6. **Never duplicate logic** — if a second resolver needs the same extraction, transformation, or formatting, it imports from the existing layer file.
+7. **Sprint extraction belongs in `sprint-extractor.js`** — never inline board discovery, sprint list fetching, or GreenHopper report loops in a resolver. Both the portfolio pipeline and individual sprint resolver call the same shared functions.
+8. **Concurrency primitives belong in `utils/concurrency.js`** — never define `makeSemaphore` or a sequential delay loop inside a resolver.
+9. **Confluence tables with unequal columns** → use `buildCustomTable(headers, rows, colspans)` instead of a markdown pipe table. The `colspans` array gives explicit width ratios per column.
 
 ---
 

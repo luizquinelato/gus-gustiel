@@ -12,16 +12,20 @@ Gustiel crawls your Jira portfolio hierarchy (Objective → Initiative → Epic 
 |---|---|
 | **Portfolio Report** | Full breakdown: summary, initiative table, epic status by team, story-level rollup |
 | **Scope-Aware Export** | Confluence export works for Objective, Initiative, and Epic keys — each scope renders the relevant sections only |
-| **Session-Based ETL** | Heavy Lead and Cycle Time data runs in two async steps (`prepare-portfolio-export` → `calculate-lead-time-data`) to avoid Forge timeout limits |
+| **Session-Based ETL** | Heavy reports run in three async steps (`prepare` → `lead-time` → `sprint-data`) to stay within Forge's 25-second timeout |
 | **Innovation Velocity** | Average Epic lead time per team (first In Progress → Done); excludes KTLO epics and zero-duration epics |
-| **Lead / Cycle Time** | Story-level LCT by issue type per team; cached in Forge Storage and reused across exports |
+| **Lead / Cycle Time** | Story-level LCT by issue type per team; cached per-user in Forge Storage; expires after 24 hours |
+| **Sprint Analysis** | On-demand sprint velocity, say/do ratio, and roll-over for any team; also answers "list sprint names" and "what board is X on?" |
 | **Confluence Export** | Single-call export to any space, folder, or page hierarchy; missing parent pages are auto-created |
 | **Upsert Logic** | 3-tier logic: update in-place → move → create. A page with the same title is never duplicated |
 | **Combined Export** | Pass multiple Jira keys; all reports are merged into one Confluence page with a divider between each |
 | **Table of Contents** | Every exported page automatically gets a clickable TOC macro (H2 for single; H1+H2 for combined) |
 | **Export Groups** | Agent groups objectives into export calls — combined = one call, split = one call per key — preventing duplicate-folder errors |
 | **Multi-Objective** | Report on multiple Jira objectives in one request; each can target a different Confluence destination |
+| **Skill Documentation Export** | Exports a full Confluence reference page documenting all skills, usage examples, access levels, and the ETL pipeline |
 | **Portfolio Analysis** | Q&A / analytical questions about your portfolio data |
+| **Session Cache** | Per-user Forge Storage isolation (`export_session:<accountId>:<key>`); users see only their own data |
+| **Admin Controls** | Dynamic admin registry; admins can inspect/wipe all storage; non-admins can inspect their own sessions only |
 | **Dual-Environment** | Auto-detects Sandbox vs Production at runtime; separate custom field IDs per environment |
 
 ---
@@ -109,28 +113,34 @@ Gustiel follows a strict **ETL (Extract → Transform → Load)** pattern. The r
 ```
 src/
 ├── config/
-│   └── constants.js                  # Versions, workflow dicts, field IDs
+│   └── constants.js                  # Version, workflow dicts, field IDs, makeSessionKey
 ├── services/
 │   ├── jira-api-service.js           # Raw Jira HTTP I/O only
 │   └── confluence-api-service.js     # Confluence page CRUD + folder resolution
 ├── extractors/
-│   └── jira-extractor.js             # Raw JSON → clean domain objects
+│   ├── jira-extractor.js             # Raw JSON → clean domain objects
+│   └── sprint-extractor.js           # Sprint board discovery, GreenHopper fetch (shared rate-limit)
 ├── transformers/
 │   └── portfolio-transformer.js      # Pure calculations — no I/O, no rendering
 ├── formatters/
-│   ├── markdown-formatter.js         # Domain data → Markdown (chat)
-│   └── confluence-formatter.js       # Markdown → Confluence Storage Format (XHTML)
+│   ├── markdown-formatter.js         # Domain data → Markdown (chat + Confluence sections)
+│   └── confluence-formatter.js       # Markdown → Confluence Storage Format (XHTML); buildCustomTable
 ├── resolvers/
 │   ├── portfolio-report-resolver.js  # Chat report (two-phase paginated)
 │   ├── confluence-export-resolver.js # Confluence export (single or combined page)
-│   ├── prepare-export-resolver.js    # ETL step 1: team discovery + layer extraction
+│   ├── prepare-export-resolver.js    # ETL step 1: team + sprint board discovery
 │   ├── lead-time-resolver.js         # ETL step 2: LCT batched changelog query
+│   ├── sprint-data-resolver.js       # ETL step 3: GreenHopper sprint reports per team
+│   ├── team-sprint-resolver.js       # Individual team sprint analysis (chat)
 │   ├── check-cache-resolver.js       # ETL cache state probe (scope-aware)
+│   ├── skill-docs-resolver.js        # Export Skill Documentation to Confluence
+│   ├── storage-admin-resolver.js     # Admin: full storage; users: own sessions only
 │   ├── portfolio-analysis-resolver.js
 │   ├── system-resolver.js
 │   └── creator-resolver.js
 └── utils/
-    └── token-estimator.js            # fitWithinBudget() — summary phase guard
+    ├── token-estimator.js            # fitWithinBudget() — summary phase guard
+    └── concurrency.js                # makeSemaphore() — shared GreenHopper rate-limit primitive
 ```
 
 See [`docs/architecture.md`](docs/architecture.md) for the full layer responsibility guide and data-flow diagrams.
@@ -175,7 +185,7 @@ The app requires these Confluence API scopes (declared in `manifest.yml`):
 
 ## Version
 
-Current version: **4.43.03** (defined in `src/config/constants.js`)
+Current version: **4.47.3** (defined in `src/config/constants.js`)
 
 ---
 
