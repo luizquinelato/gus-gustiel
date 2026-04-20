@@ -18,17 +18,16 @@
  */
 
 import { storage }                                              from '@forge/api';
-import { getEnvFromJira, searchJiraBatch }                     from '../services/jira-api-service.js';
-import { PORTFOLIO_WORKFLOWS, LCT_PAGES_PER_BATCH }            from '../config/constants.js';
+import { getEnvFromJira, searchJiraBatch,
+         getCurrentAccountId }                                  from '../services/jira-api-service.js';
+import { PORTFOLIO_WORKFLOWS, LCT_PAGES_PER_BATCH,
+         makeSessionKey }                                       from '../config/constants.js';
 import { extractItemForLCT }                                   from '../extractors/jira-extractor.js';
 import { mergeItemsIntoLCTAccumulator, finalizeLCTAccumulator } from '../transformers/portfolio-transformer.js';
 
-const sessionKey = (accountId, portfolioKey) =>
-    `export_session:${accountId}:${portfolioKey}`;
-
 export const calculateLeadTimeData = async (event) => {
     const portfolioKey = (event?.payload?.portfolioKey || event?.portfolioKey || '').trim().toUpperCase();
-    const accountId    = event?.context?.accountId || 'shared';
+    const accountId    = await getCurrentAccountId(event);
 
     if (!portfolioKey) {
         return { status: 'ERROR', message: 'portfolioKey is required.' };
@@ -37,7 +36,7 @@ export const calculateLeadTimeData = async (event) => {
     // ── READ — session written by preparePortfolioExport ─────────────────────
     let session = null;
     try {
-        session = await storage.get(sessionKey(accountId, portfolioKey));
+        session = await storage.get(makeSessionKey(accountId, portfolioKey));
     } catch (readErr) {
         return { status: 'ERROR', message: `Could not read session data: ${readErr.message}` };
     }
@@ -110,7 +109,7 @@ export const calculateLeadTimeData = async (event) => {
             lctItemsRead: newItemsRead,
         };
         try {
-            await storage.set(sessionKey(accountId, portfolioKey), partialSession);
+            await storage.set(makeSessionKey(accountId, portfolioKey), partialSession);
         } catch (storeErr) {
             return { status: 'ERROR', message: `Failed to save partial LCT state: ${storeErr.message}` };
         }
@@ -142,7 +141,7 @@ export const calculateLeadTimeData = async (event) => {
     };
 
     try {
-        await storage.set(sessionKey(accountId, portfolioKey), completedSession);
+        await storage.set(makeSessionKey(accountId, portfolioKey), completedSession);
     } catch (storeErr) {
         return { status: 'ERROR', message: `Failed to save LCT results: ${storeErr.message}` };
     }

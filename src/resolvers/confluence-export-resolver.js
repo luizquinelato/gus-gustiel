@@ -15,11 +15,12 @@
  */
 
 import { storage }                                                                      from '@forge/api';
-import { getEnvFromJira, searchJira, getUserEmail }                                      from '../services/jira-api-service.js';
+import { getEnvFromJira, searchJira, getUserEmail, getCurrentAccountId }                  from '../services/jira-api-service.js';
 import { getSpaceByKey, findPageByTitle, createConfluencePage,
          updateConfluencePage, createFolder, findFolderByTitle,
          findOrCreatePageByPath }                                                   from '../services/confluence-api-service.js';
-import { PORTFOLIO_WORKFLOWS, REPORT_TIMEZONE }              from '../config/constants.js';
+import { PORTFOLIO_WORKFLOWS, REPORT_TIMEZONE,
+         makeSessionKey }                                    from '../config/constants.js';
 import { extractItem, extractStoryStatus, chunk,
          extractItemScope }                                   from '../extractors/jira-extractor.js';
 import { groupByStatusOrdered, buildCountMap,
@@ -32,10 +33,6 @@ import { formatProgress, formatStatusTable,
          EPIC_RYG_LEGEND }                                   from '../formatters/markdown-formatter.js';
 import { markdownToStorage, buildTocMacro,
          buildAnchorMacro }                                   from '../formatters/confluence-formatter.js';
-
-// Per-user session storage key — matches the key written by prepare-export-resolver.js
-const sessionKey = (accountId, portfolioKey) =>
-    `export_session:${accountId}:${portfolioKey}`;
 
 // ── Private helper — full ETL for one portfolio key ──────────────────────────
 // Returns { portfolioKey, objectiveTitle, markdown, counts, overdueCount }
@@ -80,8 +77,8 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
             teamStatsE[epicTeam] = { velocity: null, inProgressCount: 0, doneCount: 0, avgItemsPerEpic, lct: null };
             try {
                 const sessionKeys = [
-                    ...(epicParentKey ? [sessionKey(accountId, epicParentKey)] : []),
-                    sessionKey(accountId, portfolioKey),
+                    ...(epicParentKey ? [makeSessionKey(accountId, epicParentKey)] : []),
+                    makeSessionKey(accountId, portfolioKey),
                 ];
                 // Read all candidate sessions up-front
                 const sessions = [];
@@ -184,7 +181,7 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
         }
         if (allTeamsI.length > 0) {
             try {
-                const cached = await storage.get(sessionKey(accountId, portfolioKey));
+                const cached = await storage.get(makeSessionKey(accountId, portfolioKey));
                 if (cached?.phase === 'complete' && (Date.now() - cached.timestamp) < 86_400_000) {
                     lctReadyI = true;
                     for (const team of allTeamsI) {
@@ -280,7 +277,7 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
     // Both fall back gracefully when the session has no story data (legacy / cold cache).
     let cachedSession = null;
     try {
-        cachedSession = await storage.get(sessionKey(accountId, portfolioKey));
+        cachedSession = await storage.get(makeSessionKey(accountId, portfolioKey));
     } catch (_) { /* ignore; we'll re-fetch below */ }
 
     let storyCountByEpic;
@@ -348,7 +345,7 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
         const LCT_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
         try {
             // Per-user session written by calculate-lead-time-data
-            const cached = await storage.get(sessionKey(accountId, portfolioKey));
+            const cached = await storage.get(makeSessionKey(accountId, portfolioKey));
 
             // Sprint data: always read — historical metrics don't expire after 24h
             if (cached?.sprintsByTeam) sprintsByTeam = cached.sprintsByTeam;
@@ -505,7 +502,7 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
     let hasAnyCachedData = false;
     for (const key of allKeys) {
         try {
-            const cached = await storage.get(sessionKey(accountId, key));
+            const cached = await storage.get(makeSessionKey(accountId, key));
             if (cached?.storyCountByEpic) {
                 hasAnyCachedData = true;
                 Object.assign(storyCountByEpic, cached.storyCountByEpic);
@@ -553,7 +550,7 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
         let combinedDays = 0, combinedCount = 0;
         for (const key of allKeys) {
             try {
-                const cached = await storage.get(sessionKey(accountId, key));
+                const cached = await storage.get(makeSessionKey(accountId, key));
                 if (!cached) continue;
 
                 // Sprint data: always read — historical metrics don't expire after 24h
@@ -663,7 +660,7 @@ export const exportToConfluence = async (event) => {
     const titleSuffix      = (event?.payload?.titleSuffix    || event?.titleSuffix    || '').trim();
     const mode             = (event?.payload?.mode           || event?.mode           || 'merged').trim().toLowerCase();
     // Per-user session key — isolates each user's LCT cache from others'.
-    const accountId        = event?.context?.accountId || 'shared';
+    const accountId        = await getCurrentAccountId(event);
 
     if (!portfolioKeysRaw) return { status: 'ERROR', message: 'Please provide at least one portfolio key (e.g. WX-1145).' };
     if (!spaceKey)         return { status: 'ERROR', message: 'Please provide a Confluence space key (e.g. PROJ).' };

@@ -1,36 +1,25 @@
 /**
  * Sprint Data Resolver — Step 3 of the ETL Pipeline
  *
- * For each agile team identified in the session, this resolver:
- *   1. Reads the pre-collected recentClosedSprints per team from the session (Step 1)
- *   2. Calls the GreenHopper sprint report API for each sprint (asUser, per-sprint)
- *   3. Uses parseGreenHopperSprintReport() to extract planned (estimateStatistic) and
- *      velocity/rolledOver/removed/added (currentEstimateStatistic)
- *   4. Returns data shaped for formatSprintSection()
+ * Reads the pre-collected recentClosedSprints per team from the session (Step 1),
+ * delegates all GreenHopper fetching to fetchSprintReportsForTeams() in the shared
+ * sprint extractor, and writes the results back to Forge Storage.
  *
- * Uses the same PARTIAL → SUCCESS pattern as calculate-lead-time-data.
- * Processes ANALYSIS_SPRINT_TEAMS_PER_BATCH teams per Forge invocation to
- * stay well within the 25-second timeout.
+ * Rate-limiting (semaphore) and board discovery are both handled by the extractor.
+ * This resolver is a thin orchestrator: read session → extract → write session.
  *
- * Resume token: session.sprintTeamIndex (int, 0 on first call)
- * Accumulator:  session.sprintAcc       (object, built up across PARTIAL calls)
- * Final output: session.sprintsByTeam   (written only on SUCCESS)
- *
- * Storage key: export_session:<accountId>:<portfolioKey>
+ * Final output: session.sprintsByTeam
+ * Storage key:  export_session:<accountId>:<portfolioKey>  (via makeSessionKey)
  */
 
 import { storage }                                          from '@forge/api';
-import { getBoardById,
-         getGreenHopperSprintReport }                       from '../services/jira-api-service.js';
-import { parseGreenHopperSprintReport }                     from '../transformers/portfolio-transformer.js';
-import { ANALYSIS_SPRINT_TEAMS_PER_BATCH }                  from '../config/constants.js';
-
-const sessionKey = (accountId, portfolioKey) =>
-    `export_session:${accountId}:${portfolioKey}`;
+import { getCurrentAccountId }                              from '../services/jira-api-service.js';
+import { makeSessionKey }                                   from '../config/constants.js';
+import { fetchSprintReportsForTeams }                       from '../extractors/sprint-extractor.js';
 
 export const calculateSprintData = async (event) => {
     const portfolioKey = (event?.payload?.portfolioKey || event?.portfolioKey || '').trim().toUpperCase();
-    const accountId    = event?.context?.accountId || 'shared';
+    const accountId    = await getCurrentAccountId(event);
 
     if (!portfolioKey) {
         return { status: 'ERROR', message: 'portfolioKey is required.' };
@@ -39,7 +28,7 @@ export const calculateSprintData = async (event) => {
     // ── READ session ──────────────────────────────────────────────────────────
     let session;
     try {
-        session = await storage.get(sessionKey(accountId, portfolioKey));
+        session = await storage.get(makeSessionKey(accountId, portfolioKey));
     } catch (e) {
         return { status: 'ERROR', message: `Could not read session: ${e.message}` };
     }
@@ -64,7 +53,7 @@ export const calculateSprintData = async (event) => {
         if (hasOldFormat) {
             // Clear stale data so the Confluence export won't show outdated sprint rows
             try {
-                await storage.set(sessionKey(accountId, portfolioKey), {
+                await storage.set(makeSessionKey(accountId, portfolioKey), {
                     ...session,
                     sprintsByTeam:   undefined,
                     sprintTeamIndex: undefined,
@@ -84,74 +73,16 @@ export const calculateSprintData = async (event) => {
         };
     }
 
-    // ── Resume state ──────────────────────────────────────────────────────────
-    const sprintTeamIndex = session.sprintTeamIndex ?? 0;
-    const sprintAcc       = session.sprintAcc       ?? {};
+    // ── EXTRACT — delegate entirely to the shared sprint extractor.
+    // fetchSprintReportsForTeams runs teams in parallel, applies a shared semaphore
+    // (GREENHOPPER_CONCURRENCY_LIMIT) across ALL GreenHopper calls, and parses reports.
+    const sprintsByTeam = await fetchSprintReportsForTeams(teamsWithSprints, newestSprintIdByTeam);
 
-    // ── Process next batch of teams ───────────────────────────────────────────
-    const batch = teamsWithSprints.slice(sprintTeamIndex, sprintTeamIndex + ANALYSIS_SPRINT_TEAMS_PER_BATCH);
-
-    for (const team of batch) {
-        const newestSprint = newestSprintIdByTeam[team];
-
-        try {
-            const boardId = newestSprint.boardId;
-            const targetSprints = newestSprint.recentClosedSprints || [];
-
-            // 1. Resolve board name (best-effort; falls back gracefully)
-            const boardMeta = await getBoardById(boardId);
-            const boardName = boardMeta?.name || (boardId ? `Board ${boardId}` : 'Unknown Board');
-
-            // 2. EXTRACT — GreenHopper sprint report (asApp, works in all Forge contexts)
-            const sprints = [];
-
-            for (const sprint of targetSprints) {
-                const report = await getGreenHopperSprintReport(boardId, sprint.id);
-                if (!report) {
-                    console.warn(`[SprintData] ${team}: GreenHopper returned null for sprint ${sprint.id} (${sprint.name})`);
-                    sprints.push({ id: sprint.id, name: sprint.name, endDate: sprint.endDate, error: 'Sprint report unavailable' });
-                    continue;
-                }
-                sprints.push(parseGreenHopperSprintReport(report, sprint));
-            }
-
-            sprintAcc[team] = { boardId, boardName, sprints };
-            console.log(`[SprintData] ${team}: board="${boardName}" (${boardId}), ${sprints.length} sprint(s) collected`);
-
-        } catch (teamErr) {
-            console.error(`[SprintData] Error processing team ${team}: ${teamErr.message}`);
-            sprintAcc[team] = { error: teamErr.message };
-        }
-    }
-
-    const newIndex   = sprintTeamIndex + batch.length;
-    const isComplete = newIndex >= teamsWithSprints.length;
-
-    // ── PARTIAL — more teams remain ───────────────────────────────────────────
-    if (!isComplete) {
-        try {
-            await storage.set(sessionKey(accountId, portfolioKey), {
-                ...session,
-                sprintTeamIndex: newIndex,
-                sprintAcc,
-            });
-        } catch (e) {
-            return { status: 'ERROR', message: `Failed to save partial sprint state: ${e.message}` };
-        }
-        return {
-            status:         'PARTIAL',
-            portfolioKey,
-            teamsProcessed: newIndex,
-            teamsTotal:     teamsWithSprints.length,
-            message:        `⏳ Sprint data: ${newIndex}/${teamsWithSprints.length} teams processed. Continuing…`,
-        };
-    }
-
-    // ── SUCCESS — all teams done ──────────────────────────────────────────────
+    // ── SUCCESS — write results and return ────────────────────────────────────
     try {
-        await storage.set(sessionKey(accountId, portfolioKey), {
+        await storage.set(makeSessionKey(accountId, portfolioKey), {
             ...session,
-            sprintsByTeam:   sprintAcc,
+            sprintsByTeam,
             sprintTeamIndex: undefined,
             sprintAcc:       undefined,
         });
@@ -164,7 +95,7 @@ export const calculateSprintData = async (event) => {
         portfolioKey,
         teamsProcessed: teamsWithSprints.length,
         message:        `✅ Sprint data collected for **${portfolioKey}** — ${teamsWithSprints.length} team(s) analysed.\n\n` +
-            Object.entries(sprintAcc)
+            Object.entries(sprintsByTeam)
                 .map(([t, d]) => d.error
                     ? `- **${t}**: ⚠️ ${d.error}`
                     : `- **${t}**: ${d.boardName} · ${d.sprints.length} sprint(s)`)

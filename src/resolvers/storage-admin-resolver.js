@@ -3,7 +3,8 @@
  *
  * Hidden maintenance + admin-management skills:
  *
- *   inspectStorage     — lists all storage keys or reads a specific key (admin only).
+ *   inspectStorage     — lists/reads storage keys. Non-admins see only their own session keys;
+ *                        admins see all keys.
  *   wipeGlobalStorage  — deletes ALL session entries for ALL users (admin only). Admin registry preserved.
  *   wipeUserStorage    — deletes the requesting user's own session entries (any user).
  *   addAdmin           — adds an accountId to the dynamic admin registry (super-admin only).
@@ -20,29 +21,10 @@
  *   • isAdmin()              — true if accountId === SUPER_ADMIN or is in registry.
  */
 
-import api, { route, storage, startsWith } from '@forge/api';
-import { SUPER_ADMIN_ACCOUNT_ID, ADMIN_REGISTRY_KEY } from '../config/constants.js';
-
-// ── User identity ─────────────────────────────────────────────────────────────
-
-/**
- * Resolve the current user's accountId.
- * Tries event.context first (available in some Forge module types),
- * then falls back to the Jira /myself API (always reliable in Rovo actions).
- */
-async function getCurrentAccountId(event) {
-    const fromContext = event?.context?.accountId || null;
-    if (fromContext) return fromContext;
-    try {
-        const response = await api.asUser().requestJira(route`/rest/api/3/myself`, {
-            headers: { Accept: 'application/json' },
-        });
-        const data = await response.json();
-        return data.accountId || null;
-    } catch (_) {
-        return null;
-    }
-}
+import { storage, startsWith } from '@forge/api';
+import { SUPER_ADMIN_ACCOUNT_ID, ADMIN_REGISTRY_KEY,
+         SESSION_KEY_PREFIX }                         from '../config/constants.js';
+import { getCurrentAccountId } from '../services/jira-api-service.js';
 
 // ── Auth helpers ──────────────────────────────────────────────────────────────
 
@@ -116,29 +98,84 @@ function summarizeStorageValue(key, value) {
                 entries.map(e => `- \`${e.accountId}\` — ${e.displayName || '(no name)'} — ${e.emailAddress || '(no email)'}`).join('\n'));
     }
 
-    if (key.startsWith('export_session:')) {
+    if (key.startsWith(`${SESSION_KEY_PREFIX}:`)) {
         const portfolioKey = key.split(':')[2] || '?';
         const lines = [`📦 **Session: ${portfolioKey}**`];
 
-        if (value.allTeams)            lines.push(`- **Teams (${value.allTeams.length}):** ${value.allTeams.join(', ')}`);
-        if (value.portfolioKey)        lines.push(`- **Portfolio key:** ${value.portfolioKey}`);
-        if (value.newestSprintIdByTeam) lines.push(`- **Board/sprint index:** ${Object.keys(value.newestSprintIdByTeam).length} team(s)`);
+        // Phase + timestamp
+        if (value.phase)     lines.push(`- **Phase:** \`${value.phase}\``);
+        if (value.timestamp) {
+            const saved = new Date(value.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' });
+            const ageMs  = Date.now() - value.timestamp;
+            const ageH   = Math.floor(ageMs / 3_600_000);
+            const ageM   = Math.floor((ageMs % 3_600_000) / 60_000);
+            const ageLbl = ageH > 0 ? `${ageH}h ${ageM}m ago` : `${ageM}m ago`;
+            lines.push(`- **Saved:** ${saved} EDT (${ageLbl}) ${ageMs > 86_400_000 ? '⚠️ LCT expired (>24h)' : '✅ LCT fresh'}`);
+        }
 
+        // Teams + portfolio key
+        if (value.allTeams)   lines.push(`- **Teams (${value.allTeams.length}):** ${value.allTeams.join(', ')}`);
+        if (value.portfolioKey) lines.push(`- **Portfolio key:** ${value.portfolioKey}`);
+
+        // Story counts
+        if (value.storyCount != null) {
+            const byStatus = value.storyStatusSummary
+                ? Object.entries(value.storyStatusSummary).map(([s, v]) => `${s}: ${v.count}`).join(' · ')
+                : null;
+            lines.push(`- **Stories:** ${value.storyCount}${byStatus ? ` (${byStatus})` : ''}`);
+        }
+
+        // Sprint data
         if (value.sprintsByTeam) {
             const st = Object.entries(value.sprintsByTeam);
             lines.push(`- **Sprint data:** ${st.length} teams`);
-            st.forEach(([t, d]) => lines.push(
-                d.error ? `  - ${t}: ⚠️ ${d.error}`
-                        : `  - ${t}: ${d.boardName || '?'} · ${d.sprints?.length ?? 0} sprint(s)`
-            ));
+            st.forEach(([t, d]) => {
+                if (d.error) { lines.push(`  - ${t}: ⚠️ ${d.error}`); return; }
+                lines.push(`  - **${t}** — ${d.boardName || '?'} · ${d.sprints?.length ?? 0} sprint(s)`);
+                (d.sprints || []).forEach(s => {
+                    if (s.error) { lines.push(`    - ${s.name}: ⚠️ ${s.error}`); return; }
+                    const pct  = s.sayDo != null ? `${Math.round(s.sayDo * 100)}%` : '—';
+                    const rag  = s.sayDoRag || '';
+                    lines.push(`    - ${s.name}: P:${s.planned ?? '—'} A:${s.added ?? '—'} R:${s.removed ?? '—'} ✅:${s.completed ?? '—'} 🔄:${s.rolledOver ?? '—'} ${rag}${pct}`);
+                });
+            });
         } else if (value.sprintTeamIndex !== undefined) {
             lines.push(`- **Sprint data:** ⏳ In progress (${value.sprintTeamIndex} teams done)`);
         } else {
-            lines.push(`- **Sprint data:** not yet collected`);
+            lines.push(`- **Sprint data:** ❌ not yet collected`);
         }
 
-        if (value.leadTimeByTeam)      lines.push(`- **Lead time data:** ${Object.keys(value.leadTimeByTeam).length} teams`);
-        if (value.sprintAcc)           lines.push(`- **Sprint accumulator (partial):** ${Object.keys(value.sprintAcc).length} teams buffered`);
+        // Board/sprint index
+        if (value.newestSprintIdByTeam) lines.push(`- **Board/sprint index:** ${Object.keys(value.newestSprintIdByTeam).length} team(s)`);
+
+        // Velocity
+        if (value.velocityByTeam) {
+            const vTeams = Object.entries(value.velocityByTeam);
+            lines.push(`- **Velocity (Innovation):** ${vTeams.length} teams`);
+            vTeams.forEach(([t, v]) => lines.push(`  - ${t}: ${v.averageDays != null ? `${v.averageDays}d avg` : '—'} · ${v.epicCount ?? 0} epics`));
+        } else {
+            lines.push(`- **Velocity:** ❌ not yet collected`);
+        }
+
+        // LCT — structure: lctByTeam[team].overall.leadTime.averageDays / .count
+        if (value.lctByTeam) {
+            const lTeams = Object.entries(value.lctByTeam);
+            lines.push(`- **Lead/Cycle Time:** ${lTeams.length} teams`);
+            lTeams.forEach(([t, l]) => {
+                const lead  = l.overall?.leadTime?.averageDays  ?? '—';
+                const cycle = l.overall?.cycleTime?.averageDays ?? '—';
+                const count = Math.max(l.overall?.leadTime?.count ?? 0, l.overall?.cycleTime?.count ?? 0);
+                lines.push(`  - ${t}: lead ${lead}d · cycle ${cycle}d · ${count} issues`);
+            });
+        } else {
+            lines.push(`- **Lead/Cycle Time:** ❌ not yet collected`);
+        }
+
+        // Overall velocity
+        if (value.overallVelocity) lines.push(`- **Overall velocity:** ${value.overallVelocity.averageDays}d avg · ${value.overallVelocity.epicCount} epics`);
+
+        // Partial sprint accumulator
+        if (value.sprintAcc) lines.push(`- **Sprint accumulator (partial):** ${Object.keys(value.sprintAcc).length} teams buffered`);
 
         return lines.join('\n');
     }
@@ -155,12 +192,51 @@ export const inspectStorage = async (event) => {
     const accountId = await getCurrentAccountId(event);
     const key       = (event?.payload?.key || event?.key || '').trim();
 
-    if (!accountId || !(await isAdmin(accountId))) {
-        return { status: 'ERROR', message: '🚫 **Access denied.** This action is restricted to Gustiel administrators.' };
+    if (!accountId) {
+        return { status: 'ERROR', message: '🚫 Could not determine your account ID.' };
     }
 
+    const admin      = await isAdmin(accountId);
+    const userPrefix = `${SESSION_KEY_PREFIX}:${accountId}:`;
+
+    // ── Non-admin path: read-only access to own session keys only ─────────────
+    if (!admin) {
+        try {
+            if (key) {
+                if (!key.startsWith(userPrefix)) {
+                    return { status: 'ERROR', message: '🚫 **Access denied.** You can only inspect your own session keys.\n\n_Tip: Use **"Inspect my storage"** (no key) to list your sessions, or **"What is my account ID?"** to confirm your ID._' };
+                }
+                const value = await storage.get(key);
+                if (value === undefined || value === null) {
+                    return { status: 'NOT_FOUND', message: `🔍 Key \`${key}\` does not exist in storage.` };
+                }
+                return { status: 'SUCCESS', key, message: summarizeStorageValue(key, value) };
+            }
+
+            // No key — list only the caller's own session keys
+            const result  = await storage.query().where('key', startsWith(userPrefix)).getMany();
+            const entries = result?.results || [];
+            if (entries.length === 0) {
+                return { status: 'SUCCESS', message: `🗂️ **Your session storage** — no cached sessions found.\n\n_Tip: Run a portfolio export or analysis to create a session._` };
+            }
+            const lines = entries.map(({ key: k, value: v }) => {
+                const portfolioKey = k.split(':')[2] || '?';
+                const phase        = v?.phase || 'unknown';
+                const teams        = (v?.allTeams || []).length;
+                return `- \`${k}\`\n  → **${portfolioKey}** · phase: \`${phase}\` · ${teams} team(s)`;
+            });
+            return {
+                status:  'SUCCESS',
+                count:   entries.length,
+                message: `🗂️ **Your session storage (${entries.length} session${entries.length === 1 ? '' : 's'}):**\n${lines.join('\n')}\n\n_Tip: Ask me to "inspect storage key \`<key>\`" to see full details._`,
+            };
+        } catch (err) {
+            return { status: 'ERROR', message: `Storage inspection failed: ${err.message}` };
+        }
+    }
+
+    // ── Admin path: full access to all keys ───────────────────────────────────
     try {
-        // Read a specific key
         if (key) {
             const value = await storage.get(key);
             if (value === undefined || value === null) {
@@ -188,7 +264,7 @@ export const inspectStorage = async (event) => {
         return {
             status:  'SUCCESS',
             count:   keys.length,
-            message: `🗄️ **Storage keys (${keys.length}):**\n${lines.join('\n')}\n\n_Tip: ask me to "inspect storage key \`<key>\`" to see its contents._`,
+            message: `🗄️ **All storage keys (${keys.length}):**\n${lines.join('\n')}\n\n_Tip: Ask me to "inspect storage key \`<key>\`" to see its contents._`,
         };
     } catch (err) {
         return { status: 'ERROR', message: `Storage inspection failed: ${err.message}` };
@@ -219,7 +295,7 @@ export const wipeUserStorage = async (event) => {
     if (confirm !== 'YES') return { status: 'ERROR', message: '⚠️ Please confirm with `confirm = "YES"` and try again.' };
 
     try {
-        const deleted = await deleteAllMatchingKeys(`export_session:${accountId}:`);
+        const deleted = await deleteAllMatchingKeys(`${SESSION_KEY_PREFIX}:${accountId}:`);
         return { status: 'SUCCESS', deleted, message: `🗑️ **Your storage has been cleared.** ${deleted} session entr${deleted === 1 ? 'y' : 'ies'} deleted.${deleted === 0 ? ' (Nothing to clear — no cached sessions found.)' : ''}` };
     } catch (err) {
         return { status: 'ERROR', message: `Storage wipe failed: ${err.message}` };

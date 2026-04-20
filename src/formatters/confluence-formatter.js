@@ -55,6 +55,7 @@ function inlineToHtml(text) {
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
         .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
         .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
         .replace(/_([^_\s][^_]*)_/g, '<em>$1</em>');
@@ -158,6 +159,57 @@ function renderTable(headers, bodyRows) {
             if (wideIndexes.has(i)) return `<td colspan="2">${cellToHtml(c)}</td>`;
             const style = tdStyle(c);
             return `<td${style}>${cellToHtml(c)}</td>`;
+        }).join('');
+        return `<tr>${tds}</tr>`;
+    }).join('');
+
+    return `<table data-layout="full-width">${colgroup}<tbody><tr>${thCells}</tr>${bodyHtml}</tbody></table>`;
+}
+
+/**
+ * Build a Confluence storage-format table with explicit per-column colspan values.
+ *
+ * Use this instead of markdown pipe tables when you need specific column width
+ * ratios that the auto-colspan logic in renderTable() cannot express — for
+ * example, a narrow label column (colspan=1) beside a wide description column
+ * (colspan=3).
+ *
+ * The virtual-column strategy is the same as renderTable(): a <colgroup> with
+ * (sum of colspans) equal-width phantom columns gives Confluence a consistent
+ * width grid to snap to, which survives page re-renders.
+ *
+ * Cell content supports the same inline Markdown as the rest of the formatter:
+ *   **bold**, `code`, _italic_, [link](url)
+ *
+ * @param {string[]}   headers   - Header cell strings (one per column)
+ * @param {string[][]} bodyRows  - Body rows: array of cell-string arrays
+ * @param {number[]}   colspans  - Colspan for each column, e.g. [1, 1, 3]
+ * @returns {string} Confluence storage-format table XHTML
+ *
+ * @example
+ *   buildCustomTable(
+ *     ['#', 'Action', 'What It Does'],
+ *     [['1', '`prepare-portfolio-export`', 'Extracts...']],
+ *     [1, 1, 3]   // # narrow | Action normal | What It Does wide
+ *   )
+ */
+export function buildCustomTable(headers, bodyRows, colspans) {
+    const virtualCols = colspans.reduce((a, b) => a + b, 0);
+    const colgroup    = `<colgroup>${Array.from({ length: virtualCols }, () => '<col />').join('')}</colgroup>`;
+
+    const thCells = headers.map((h, i) => {
+        const span = colspans[i] || 1;
+        return span > 1
+            ? `<th colspan="${span}">${cellToHtml(h)}</th>`
+            : `<th>${cellToHtml(h)}</th>`;
+    }).join('');
+
+    const bodyHtml = bodyRows.map(row => {
+        const tds = row.map((c, i) => {
+            const span = colspans[i] || 1;
+            return span > 1
+                ? `<td colspan="${span}">${cellToHtml(c)}</td>`
+                : `<td>${cellToHtml(c)}</td>`;
         }).join('');
         return `<tr>${tds}</tr>`;
     }).join('');

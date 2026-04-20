@@ -30,6 +30,7 @@ modules:
         - get-my-account-id
         - analyze-portfolio-chat
         - get-team-sprint-analysis
+        - export-skill-docs
 
   function:
     - key: getAgentVersion
@@ -70,6 +71,8 @@ modules:
       handler: index.chatAnalysisSection
     - key: getTeamSprintAnalysis
       handler: index.getTeamSprintAnalysis
+    - key: exportSkillDocs
+      handler: index.exportSkillDocs
 
   action:
     - key: get-agent-version
@@ -391,6 +394,36 @@ modules:
             "export_session:accountId:WX-1145"). If omitted, lists all keys.
           required: false
 
+    - key: export-skill-docs
+      function: exportSkillDocs
+      name: Export Skill Documentation
+      actionVerb: CREATE
+      description: >-
+        Exports a comprehensive Confluence page documenting all Gustiel skills,
+        usage examples, access levels, and the ETL pipeline. No Jira data is
+        fetched — content is static documentation with dynamic version/env metadata.
+      inputs:
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: The Confluence space key where the page will be created (e.g. GUSTIEL).
+          required: true
+        parentPath:
+          title: Parent Page Path
+          type: string
+          description: >
+            Optional. Slash-separated page hierarchy under which the doc page
+            will be nested (e.g. "Docs/Gustiel"). Pages are created if missing.
+          required: false
+        folderId:
+          title: Folder ID
+          type: string
+          description: >
+            Optional. Numeric ID of an existing Confluence native folder.
+            Extract from the folder URL after /folder/ (e.g. "52592641").
+            Takes precedence over parentPath when provided.
+          required: false
+
     - key: analyze-portfolio-chat
       function: chatAnalysisSection
       name: Analyze Portfolio in Chat
@@ -439,6 +472,13 @@ permissions:
   scopes:
     - read:jira-work
     - read:jira-user
+    - read:sprint:jira-software
+    - read:board-scope:jira-software
+    - read:project:jira
+    - read:issue-details:jira
+    - read:issue-meta:jira
+    - read:field-configuration:jira
+    - read:status:jira
     - storage:app
     - write:page:confluence
     - read:page:confluence

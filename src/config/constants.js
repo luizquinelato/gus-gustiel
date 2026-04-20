@@ -6,7 +6,7 @@
  */
 
 // --- VERSION TRACKING ---
-export const VERSION = "4.45.10";
+export const VERSION = "4.47.3";
 
 // --- ANALYSIS PAGINATION ---
 // Teams per NEXT page for the Epics-by-Team section (more data per team → smaller batches).
@@ -14,13 +14,30 @@ export const ANALYSIS_TEAMS_PER_PAGE = 7;
 // Teams per NEXT page for the LCT/Velocity section (less data per team → larger batches).
 export const ANALYSIS_LCT_TEAMS_PER_PAGE = 10;
 // Teams processed per Forge invocation for sprint analysis.
-// Lower than LCT because each team makes ~9 API calls (board lookup + sprint list + up to 6 GreenHopper calls).
-export const ANALYSIS_SPRINT_TEAMS_PER_BATCH = 3;
+// GreenHopper now uses asApp() (same speed as all other Agile calls), so batch size
+// can match LCT. Each team: 1 board lookup + 1 sprint list + up to 6 GreenHopper calls = ~8 calls.
+export const ANALYSIS_SPRINT_TEAMS_PER_BATCH = 6;
 // --- ADMIN ---
 // Immutable root of trust — never changes, never stored in dynamic registry.
 export const SUPER_ADMIN_ACCOUNT_ID = '641b50110e6828ab202643c3';
 // Storage key for the dynamic admin registry (array of additional accountIds).
 export const ADMIN_REGISTRY_KEY     = 'admin:registry';
+
+// --- SESSION STORAGE ---
+// Forge Storage key format for per-user portfolio sessions.
+// All resolvers MUST use makeSessionKey — never define the format locally.
+export const SESSION_KEY_PREFIX = 'export_session';
+export const makeSessionKey = (accountId, portfolioKey) =>
+    `${SESSION_KEY_PREFIX}:${accountId}:${portfolioKey}`;
+
+// --- GREENHOPPER RATE LIMITING ---
+// Maximum number of concurrent GreenHopper (Agile sprint report) API calls
+// across the entire Forge invocation.  GreenHopper is rate-limited per Jira
+// instance (not per board), so even calls to different boards count against
+// the same quota.  Limit of 3 keeps us safely under the burst threshold while
+// finishing within Forge's 25-second function timeout for large portfolios.
+// Used by sprint-extractor.js → fetchSprintReportsForTeams via makeSemaphore.
+export const GREENHOPPER_CONCURRENCY_LIMIT = 3;
 
 // --- REPORT TIMEZONE ---
 // IANA timezone string used to stamp "Created at" on Confluence reports.

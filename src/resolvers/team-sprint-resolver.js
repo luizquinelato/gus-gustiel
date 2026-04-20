@@ -4,19 +4,20 @@
  * On-demand chat skill — NOT part of the Confluence export ETL pipeline.
  * Answers: "Show me the sprint velocity for team X."
  *
- * ETL flow (strict layer separation):
- *   EXTRACT   — searchJira (discovery) → extractClosedSprints()
- *   EXTRACT   — searchJira (data)
- *   TRANSFORM — computeSprintMetrics()
+ * ETL flow (strict layer separation — all sprint I/O delegated to sprint-extractor):
+ *   EXTRACT   — discoverBoardIdForTeam()        (JQL-based boardId discovery)
+ *   EXTRACT   — getRecentBoardClosedSprints()   (Board API — authoritative sprint list)
+ *   EXTRACT   — fetchSprintReportsForTeams()    (GreenHopper + parse, shared semaphore)
  *   LOAD      — formatTeamSprintChat()
  *
  * No session or Forge Storage involved. Completes in a single Forge invocation.
  */
 
-import { getEnvFromJira, searchJira }   from '../services/jira-api-service.js';
-import { extractClosedSprints }          from '../extractors/jira-extractor.js';
-import { computeSprintMetrics }          from '../transformers/portfolio-transformer.js';
-import { formatTeamSprintChat }          from '../formatters/markdown-formatter.js';
+import { getEnvFromJira,
+         getRecentBoardClosedSprints }         from '../services/jira-api-service.js';
+import { discoverBoardIdForTeam,
+         fetchSprintReportsForTeams }          from '../extractors/sprint-extractor.js';
+import { formatTeamSprintChat }               from '../formatters/markdown-formatter.js';
 
 export const getTeamSprintAnalysis = async (event) => {
     const teamName = (event?.payload?.teamName || event?.teamName || '').trim();
@@ -27,33 +28,27 @@ export const getTeamSprintAnalysis = async (event) => {
 
     try {
         // ── Environment ──────────────────────────────────────────────────────────
-        const env           = await getEnvFromJira();
-        const agileTeamNum  = env.fields.agileTeam.replace('customfield_', '');
-        const sprintField   = env.fields.sprint;
-        const storyPtsField = env.fields.storyPoints;
+        const env          = await getEnvFromJira();
+        const agileTeamNum = env.fields.agileTeam.replace('customfield_', '');
+        const sprintField  = env.fields.sprint;
 
-        // ── EXTRACT 1: Discovery — find active team issues to surface sprint history
-        // Uses the user's JQL approach: active issues (not Done) ordered by most recent.
-        // The sprint field on each issue contains the full sprint history for that story.
-        const seedIssues = await searchJira(
-            `cf[${agileTeamNum}] = "${teamName}" AND sprint is not null AND statusCategory != "Done" ORDER BY statusCategory desc, updated desc`,
-            ['status', sprintField],
-            [],   // no expand
-            100,  // maxResults per page
-            100   // maxTotalResults — 100 active issues is enough to discover all recent sprints
-        );
+        // ── EXTRACT 1: boardId discovery (shared extractor — two-pass JQL strategy)
+        const { boardId } = await discoverBoardIdForTeam(teamName, agileTeamNum, sprintField);
 
-        let targetSprints = extractClosedSprints(seedIssues, sprintField);
-
-        // ── EXTRACT 1b: Fallback — if all stories are Done, seed from closed sprints directly
-        if (targetSprints.length === 0) {
-            const closedIssues = await searchJira(
-                `cf[${agileTeamNum}] = "${teamName}" AND sprint in closedSprints() ORDER BY updated desc`,
-                [sprintField],
-                [], 50, 50
-            );
-            targetSprints = extractClosedSprints(closedIssues, sprintField);
+        if (!boardId) {
+            return {
+                status:  'NO_DATA',
+                message: `No sprint board found for team **${teamName}**. Check the team name or confirm stories are assigned to sprint boards.`,
+            };
         }
+
+        // ── EXTRACT 2: Sprint list — authoritative from Board API
+        const cutoffMs      = Date.now() - 6 * 30 * 24 * 60 * 60 * 1000;
+        const boardSprints  = await getRecentBoardClosedSprints(boardId, 6);
+        const targetSprints = boardSprints
+            .filter(s => s.endDate && new Date(s.endDate).getTime() >= cutoffMs);
+
+        console.log(`[TeamSprintAnalysis] team="${teamName}" boardId=${boardId} targeted=${targetSprints.length} sprints: ${targetSprints.map(s => s.name).join(', ')}`);
 
         if (targetSprints.length === 0) {
             return {
@@ -62,20 +57,22 @@ export const getTeamSprintAnalysis = async (event) => {
             };
         }
 
-        // ── EXTRACT 2: Data — all team issues in those sprints (status + SP + sprint field)
-        const sprintIds  = targetSprints.map(s => s.id).join(',');
-        const dataIssues = await searchJira(
-            `cf[${agileTeamNum}] = "${teamName}" AND sprint in (${sprintIds}) AND issuetype in standardIssueTypes()`,
-            ['status', storyPtsField, sprintField]
-        );
+        // ── EXTRACT 3: GreenHopper reports (shared extractor — semaphore rate-limiting)
+        // Build a minimal newestSprintByTeam map so the shared function can be called
+        // for a single team the same way the portfolio pipeline calls it for many.
+        const sprintMap = { [teamName]: { boardId, recentClosedSprints: targetSprints } };
+        const result    = await fetchSprintReportsForTeams([teamName], sprintMap);
 
-        // ── TRANSFORM — pure: compute velocity, rolled-over, planned, Say/Do per sprint
-        const sprintResults = computeSprintMetrics(dataIssues, targetSprints, sprintField, storyPtsField);
+        const { boardName, sprints, error: teamError } = result[teamName] || {};
 
-        // ── LOAD — pure: render markdown table for chat display
-        const message = formatTeamSprintChat(teamName, sprintResults);
+        if (teamError) {
+            return { status: 'ERROR', message: `Sprint report error for **${teamName}**: ${teamError}` };
+        }
 
-        return { status: 'SUCCESS', team: teamName, sprints: sprintResults, message };
+        // ── LOAD — render chat table
+        const message = formatTeamSprintChat(teamName, boardName, boardId, sprints);
+
+        return { status: 'SUCCESS', team: teamName, board: boardName, boardId, sprints, message };
 
     } catch (e) {
         console.error(`[TeamSprintAnalysis] Error for "${teamName}": ${e.message}`);

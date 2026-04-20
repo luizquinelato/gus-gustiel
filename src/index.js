@@ -15,4 +15,5 @@ export { calculateSprintData }    from './resolvers/sprint-data-resolver.js';
 export { inspectStorage, wipeGlobalStorage, wipeUserStorage, addAdmin, removeAdmin, deleteAllAdmins as clearAdminRegistry, listAdmins, getMyAccountId } from './resolvers/storage-admin-resolver.js';
 export { chatAnalysisSection }                from './resolvers/chat-analysis-resolver.js';
 export { getTeamSprintAnalysis }              from './resolvers/team-sprint-resolver.js';
+export { exportSkillDocs }                    from './resolvers/skill-docs-resolver.js';
 
