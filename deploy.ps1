@@ -11,6 +11,17 @@
 $flagProd = $args -contains '--prod'
 $flagAll  = $args -contains '--all'
 
+# Reject unrecognised flags
+$unknown = $args | Where-Object { $_ -notin '--prod', '--all' }
+if ($unknown) {
+    Write-Host "ERROR: Unknown parameter(s): $($unknown -join ', ')" -ForegroundColor Red
+    Write-Host "Usage: .\deploy.ps1 [--prod] [--all]" -ForegroundColor Yellow
+    Write-Host "  (no flag)  Deploy to development" -ForegroundColor DarkGray
+    Write-Host "  --prod     Deploy to production" -ForegroundColor DarkGray
+    Write-Host "  --all      Deploy to development then production" -ForegroundColor DarkGray
+    exit 1
+}
+
 $SITE = "wexinc-sandbox-new.atlassian.net"
 $env:NODE_TLS_REJECT_UNAUTHORIZED = "0"
 
