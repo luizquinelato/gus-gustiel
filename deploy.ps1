@@ -19,54 +19,55 @@ function Deploy-Forge {
 
     $isProd = $ForgeEnv -eq "production"
     $label  = if ($isProd) { "PRODUCTION" } else { "DEVELOPMENT" }
+    $bar    = [string]::new([char]0x2500, 48)
 
     Write-Host ""
-    Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
-    Write-Host "🚀 Deploying → $label" -ForegroundColor Cyan
+    Write-Host $bar -ForegroundColor DarkGray
+    Write-Host ">> Deploying: $label" -ForegroundColor Cyan
 
     # Patch agent name in manifest for non-production deployments
     if (-not $isProd) {
-        Write-Host "🏷️  Agent name → [DEV] Gustiel (Portfolio Sentinel)" -ForegroundColor Yellow
+        Write-Host "   Agent name: [DEV] Gustiel (Portfolio Sentinel)" -ForegroundColor Yellow
         (Get-Content manifest.yml) `
-            -replace 'name: Gustiel \(Portfolio Sentinel\)', 'name: [DEV] Gustiel (Portfolio Sentinel)' `
+            -replace 'name: Gustiel \(Portfolio Sentinel\)', 'name: "[DEV] Gustiel (Portfolio Sentinel)"' `
             | Set-Content manifest.yml
     }
 
     try {
-        # ── Deploy ────────────────────────────────────────────────────────────
+        # Deploy
         forge deploy --environment $ForgeEnv --non-interactive
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "❌ Deploy failed (exit code $LASTEXITCODE)" -ForegroundColor Red
+            Write-Host "FAILED: Deploy exited with code $LASTEXITCODE" -ForegroundColor Red
             return
         }
-        Write-Host "✅ Deploy complete" -ForegroundColor Green
+        Write-Host "OK: Deploy complete" -ForegroundColor Green
 
-        # ── Upgrade Jira ──────────────────────────────────────────────────────
-        Write-Host "🔄 Upgrading Jira..." -ForegroundColor Cyan
+        # Upgrade Jira
+        Write-Host ">> Upgrading Jira..." -ForegroundColor Cyan
         forge install --upgrade --site $SITE --environment $ForgeEnv --product Jira --confirm-scopes --non-interactive
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "⚠️  Jira upgrade returned exit code $LASTEXITCODE — run 'forge install --upgrade' manually if needed." -ForegroundColor Yellow
+            Write-Host "WARN: Jira upgrade exited $LASTEXITCODE -- run 'forge install --upgrade' manually if needed." -ForegroundColor Yellow
         }
 
-        # ── Upgrade Confluence ────────────────────────────────────────────────
-        Write-Host "🔄 Upgrading Confluence..." -ForegroundColor Cyan
+        # Upgrade Confluence
+        Write-Host ">> Upgrading Confluence..." -ForegroundColor Cyan
         forge install --upgrade --site $SITE --environment $ForgeEnv --product Confluence --confirm-scopes --non-interactive
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "⚠️  Confluence upgrade returned exit code $LASTEXITCODE — run 'forge install --upgrade' manually if needed." -ForegroundColor Yellow
+            Write-Host "WARN: Confluence upgrade exited $LASTEXITCODE -- run 'forge install --upgrade' manually if needed." -ForegroundColor Yellow
         }
 
-        Write-Host "✅ $label fully deployed and upgraded!" -ForegroundColor Green
+        Write-Host "OK: $label fully deployed and upgraded!" -ForegroundColor Green
     }
     finally {
-        # Always restore manifest.yml — runs even if forge crashes mid-deploy
+        # Always restore manifest.yml -- runs even if forge crashes mid-deploy
         git checkout manifest.yml 2>$null
         if (-not $isProd) {
-            Write-Host "🔁 manifest.yml restored" -ForegroundColor DarkGray
+            Write-Host "   manifest.yml restored" -ForegroundColor DarkGray
         }
     }
 }
 
-# ── Routing ───────────────────────────────────────────────────────────────────
+# Routing
 if ($flagAll) {
     Deploy-Forge "development"
     Deploy-Forge "production"
@@ -75,7 +76,9 @@ if ($flagAll) {
 } else {
     Deploy-Forge "development"
 }
+
+$bar = [string]::new([char]0x2500, 48)
 Write-Host ""
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor DarkGray
-Write-Host "🏁 Done." -ForegroundColor Cyan
+Write-Host $bar -ForegroundColor DarkGray
+Write-Host "Done." -ForegroundColor Cyan
 
