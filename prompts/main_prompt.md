@@ -484,7 +484,7 @@ The response always includes `detectedScope` (`objective`, `initiative`, `epic`,
 | `true` | `layers_1_4` | Show: *"⚠️ Partial session found for **[portfolioKey]** (saved [cachedAt]): extraction is done but Lead/Cycle Time was not yet calculated."* → **Ask the user:** *"1️⃣ Continue from here (run LCT calculation only) 2️⃣ Start a full fresh extraction 3️⃣ Export now without LCT data"* |
 
 **After collecting all user choices (Objective scope only):**
-- Keys where user chose **"use cache"** (complete) → skip to Step E-warn. *(Sprint data is already in the session from the previous run.)*
+- Keys where user chose **"use cache"** (complete) → go to Step E-sprint for those keys. *(The sprint resolver is idempotent — if sprint data is already in the session it returns SUCCESS instantly with zero API calls. This guarantees the sprint section is never empty due to a previous failed or timed-out run.)*
 - Keys where user chose **"continue"** (partial, run LCT only) → go to Step E-lct for those keys only. After LCT completes, go to Step E-sprint for those keys. Then join with any "use cache" keys at Step E-warn.
 - Keys where user chose **"refresh"** or **"start fresh"** (or no cache at all) → go to Step E-extract.
 - Keys where user chose **"export without LCT"** → skip E-extract, E-lct, and E-sprint; proceed to E-warn with a note that Team Efficiency and Sprint Analysis data will be missing.
@@ -525,26 +525,26 @@ Once all keys have either a complete session or are explicitly flagged as "no LC
 
 ---
 
-**Step E-sprint — Calculate Sprint Data (batched — same silent loop as E-lct)**
+**Step E-sprint — Calculate Sprint Data (batched)**
 
-For each key that completed E-lct successfully, call `calculate-sprint-data` with:
+> ⚠️ **Process keys strictly one at a time.** Finish the entire PARTIAL loop for one key before starting the next. Never call `calculate-sprint-data` for a new key while the previous key is still returning `PARTIAL`.
+
+For each key in sequence (all keys that reached this step — "use cache", "continue", or fresh), call `calculate-sprint-data` with:
 - `portfolioKey` = the key
 
-Large portfolios (many teams) are processed in batches across multiple Forge invocations to avoid the 25 s timeout. **Do NOT post any message to the user** regardless of outcome until all keys have been processed.
+Large portfolios are automatically batched across multiple invocations. **Do NOT post any message to the user** until all keys are fully processed.
 
-**On `status === "PARTIAL"`:** **Do NOT post any message.** Immediately call `calculate-sprint-data` again with the same `portfolioKey`. Repeat silently until `status` is `"SUCCESS"`, `"NO_SPRINT_DATA"`, or `"ERROR"`.
+**On `status === "PARTIAL"`:** **Do NOT post any message.** Immediately call `calculate-sprint-data` again with the **same `portfolioKey`**. Repeat silently until the status is no longer `PARTIAL`. Do not move to the next key while looping.
 
-**On `status === "SUCCESS"`:** No message needed — proceed silently to E-confirm.
+**On `status === "SUCCESS"`:** Mark this key's sprint as done. Move to the **next key** in the list. Do not proceed to E-confirm yet.
 
-**On `status === "NO_SPRINT_DATA"`:** No message needed — proceed silently to E-confirm. The Sprint Analysis section will show a placeholder.
+**On `status === "NO_SPRINT_DATA"`:** Mark this key as "no sprint data". Move to the **next key** in the list. The Sprint Analysis section will show a placeholder.
 
-**On `status === "ERROR"`:** Post the error message verbatim and continue to E-confirm without retrying.
+**On `status === "ERROR"`:** Mark this key as "sprint error". Move to the **next key** in the list.
 
-**On `status === "NO_SESSION"`:** Post:
-> *"⚠️ Sprint data session not found for **[portfolioKey]**. Please re-run `prepare-portfolio-export` and then retry sprint data collection."*
-Then continue to E-confirm without retrying.
+**On `status === "NO_SESSION"`:** Mark this key as "sprint error". Move to the **next key** in the list.
 
-Once all keys have finished E-sprint (regardless of outcome), proceed to Step E-confirm.
+Once **every key** has a final status (SUCCESS, NO_SPRINT_DATA, ERROR, or NO_SESSION), proceed silently to Step E-confirm.
 
 ---
 
