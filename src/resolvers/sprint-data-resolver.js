@@ -25,9 +25,11 @@
  */
 
 import { storage }                                                    from '@forge/api';
-import { getCurrentAccountId }                                        from '../services/jira-api-service.js';
+import { getCurrentAccountId, getEnvFromJira,
+         getRecentBoardClosedSprints }                                from '../services/jira-api-service.js';
 import { makeSessionKey, ANALYSIS_SPRINT_TEAMS_PER_BATCH }           from '../config/constants.js';
-import { fetchSprintReportsForTeams }                                 from '../extractors/sprint-extractor.js';
+import { fetchSprintReportsForTeams,
+         discoverBoardIdForTeam }                                     from '../extractors/sprint-extractor.js';
 
 export const calculateSprintData = async (event) => {
     const portfolioKey = (event?.payload?.portfolioKey || event?.portfolioKey || '').trim().toUpperCase();
@@ -49,11 +51,7 @@ export const calculateSprintData = async (event) => {
         return { status: 'NO_SESSION', message: `No session found for **${portfolioKey}**. Run \`prepare-portfolio-export\` first.` };
     }
 
-    const newestSprintIdByTeam = session.newestSprintIdByTeam || {};
-    const allTeams             = session.allTeams || [];
-
-    // Only process teams that have pre-collected closed sprints from Step 1
-    const teamsWithSprints = allTeams.filter(t => newestSprintIdByTeam[t]?.recentClosedSprints?.length > 0);
+    const allTeams = session.allTeams || [];
 
     // ── IDEMPOTENCY — already complete, no batch in progress ─────────────────
     // Safe to call on every key (including "use cache" sessions) — zero API calls.
@@ -68,36 +66,56 @@ export const calculateSprintData = async (event) => {
         };
     }
 
-    // ── NO DATA ───────────────────────────────────────────────────────────────
-    if (teamsWithSprints.length === 0) {
-        // Detect old session format — clear any stale sprint fields
-        const hasOldFormat = allTeams.length > 0 && Object.keys(newestSprintIdByTeam).length > 0;
-        if (hasOldFormat) {
+    // Mutable copy — may be extended by board discovery below
+    const newestSprintIdByTeam = { ...(session.newestSprintIdByTeam || {}) };
+    const startIndex           = session.sprintTeamIndex ?? 0;
+    const acc                  = session.sprintAcc       ?? {};
+
+    // ── DISCOVER MISSING TEAMS (first batch only) ─────────────────────────────
+    // Teams that are in allTeams (discovered from epic agileTeam fields) but absent
+    // from newestSprintIdByTeam have no sprint-field data for THIS portfolio's stories
+    // (e.g. their stories sit under epics in a different objective hierarchy).
+    // discoverBoardIdForTeam is a global Jira query — board-level, not portfolio-scoped —
+    // so the same sprint numbers appear in every report where the team has work.
+    if (startIndex === 0) {
+        const missingTeams = allTeams.filter(t => !newestSprintIdByTeam[t]);
+        if (missingTeams.length > 0) {
             try {
-                await storage.set(makeSessionKey(accountId, portfolioKey), {
-                    ...session,
-                    sprintsByTeam:   undefined,
-                    sprintTeamIndex: undefined,
-                    sprintAcc:       undefined,
-                });
-            } catch (_) { /* best-effort */ }
-            return {
-                status: 'NO_SPRINT_DATA',
-                portfolioKey,
-                message: `⚠️ Session for **${portfolioKey}** uses an older format with no sprint snapshots. Wipe the session and re-run \`prepare-portfolio-export\`, then retry.`,
-            };
+                const env               = await getEnvFromJira();
+                const agileTeamFieldNum = session.agileTeamFieldNum || env.fields.agileTeam.replace('customfield_', '');
+                const sprintField       = env.fields.sprint;
+                console.log(`[SprintData] ${portfolioKey} — discovering boards for ${missingTeams.length} uncovered team(s): ${missingTeams.join(', ')}`);
+                await Promise.all(missingTeams.map(async (team) => {
+                    try {
+                        const { boardId } = await discoverBoardIdForTeam(team, agileTeamFieldNum, sprintField);
+                        if (!boardId) return;
+                        const recentClosedSprints = await getRecentBoardClosedSprints(boardId);
+                        if (recentClosedSprints.length > 0) {
+                            newestSprintIdByTeam[team] = { boardId, recentClosedSprints };
+                            console.log(`[SprintData] ${portfolioKey} team ${team} — discovered board ${boardId}, ${recentClosedSprints.length} sprint(s)`);
+                        }
+                    } catch (e) {
+                        console.warn(`[SprintData] ${portfolioKey} team ${team} — board discovery failed: ${e.message}`);
+                    }
+                }));
+            } catch (e) {
+                console.warn(`[SprintData] ${portfolioKey} — board discovery error: ${e.message}`);
+            }
         }
-        return {
-            status: 'NO_SPRINT_DATA',
-            portfolioKey,
-            message: `⚠️ No sprint data found for **${portfolioKey}**. Teams may not have stories assigned to sprints.`,
-        };
     }
 
-    // ── BATCHED EXTRACTION ────────────────────────────────────────────────────
-    // Pick up where the previous invocation left off (or start at 0).
-    const startIndex = session.sprintTeamIndex ?? 0;
-    const acc        = session.sprintAcc        ?? {};
+    // ── TEAMS TO PROCESS ──────────────────────────────────────────────────────
+    // Derived after discovery so newly found teams are included.
+    const teamsWithSprints = allTeams.filter(t => newestSprintIdByTeam[t]?.recentClosedSprints?.length > 0);
+
+    // ── NO DATA ───────────────────────────────────────────────────────────────
+    if (teamsWithSprints.length === 0) {
+        return {
+            status:  'NO_SPRINT_DATA',
+            portfolioKey,
+            message: `⚠️ No sprint data found for **${portfolioKey}**. Teams may not have stories assigned to sprints, or no active boards were found.`,
+        };
+    }
 
     const batch      = teamsWithSprints.slice(startIndex, startIndex + ANALYSIS_SPRINT_TEAMS_PER_BATCH);
     const nextIndex  = startIndex + batch.length;
@@ -112,6 +130,7 @@ export const calculateSprintData = async (event) => {
         try {
             await storage.set(makeSessionKey(accountId, portfolioKey), {
                 ...session,
+                newestSprintIdByTeam,  // persist discovered teams so later batches include them
                 sprintTeamIndex: nextIndex,
                 sprintAcc:       newAcc,
             });
@@ -130,6 +149,7 @@ export const calculateSprintData = async (event) => {
     try {
         await storage.set(makeSessionKey(accountId, portfolioKey), {
             ...session,
+            newestSprintIdByTeam,  // persist so future idempotency checks work correctly
             sprintsByTeam:   newAcc,
             sprintTeamIndex: undefined,
             sprintAcc:       undefined,

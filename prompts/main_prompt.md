@@ -483,7 +483,7 @@ The response always includes `detectedScope` (`objective`, `initiative`, `epic`,
 | `true` | `complete` | Show: *"📦 Cached data found for **[portfolioKey]** (saved [cachedAt]): [initiativeCount] initiatives · [epicCount] epics · [teamCount] team(s). Includes Lead/Cycle Time data."* → **Ask the user:** *"1️⃣ Use this cached data (fast export) or 2️⃣ Refresh with fresh Jira data?"* |
 | `true` | `layers_1_4` | Show: *"⚠️ Partial session found for **[portfolioKey]** (saved [cachedAt]): extraction is done but Lead/Cycle Time was not yet calculated."* → **Ask the user:** *"1️⃣ Continue from here (run LCT calculation only) 2️⃣ Start a full fresh extraction 3️⃣ Export now without LCT data"* |
 
-**After collecting all user choices (Objective scope only):**
+**After collecting all user choices (applies to ALL scope levels — Objective, Initiative, and Epic):**
 - Keys where user chose **"use cache"** (complete) → go to Step E-sprint for those keys. *(The sprint resolver is idempotent — if sprint data is already in the session it returns SUCCESS instantly with zero API calls. This guarantees the sprint section is never empty due to a previous failed or timed-out run.)*
 - Keys where user chose **"continue"** (partial, run LCT only) → go to Step E-lct for those keys only. After LCT completes, go to Step E-sprint for those keys. Then join with any "use cache" keys at Step E-warn.
 - Keys where user chose **"refresh"** or **"start fresh"** (or no cache at all) → go to Step E-extract.
@@ -546,12 +546,12 @@ Large portfolios are processed in batches across multiple Forge invocations. The
 
 Once **every key** has a final status (SUCCESS, NO_SPRINT_DATA, ERROR, or NO_SESSION), proceed silently to Step E-confirm.
 
-> 🔄 **If your turn must end before sprint collection is complete** (this is normal after a long extraction + LCT phase — Rovo has a per-turn tool-call limit), you MUST ask the user to reply before you can continue. Post **only** the following — word for word, no additions:
+> 🔄 **If your turn must end before sprint collection is complete** (normal after a long extraction + LCT phase), you MUST ask the user to reply. Post **only** the following — replacing the bracketed parts, nothing else added:
 >
-> *"⏳ Sprint data collection is running for **[portfolioKey]**. This step processes teams in batches and needs one more moment. Please reply **"continue"** and I'll finish collecting and then export your report."*
+> *"⏳ Sprint data collection in progress. Still pending: **[comma-separated list of every key that has NOT yet reached SUCCESS / NO_SPRINT_DATA / ERROR]**. Please reply **"continue"** and I'll finish all remaining keys and then export."*
 >
-> ⛔ Do NOT say "proceeding", "finalizing", or anything that implies automatic continuation. The user must reply for the next turn to start.
-> ✅ When the user replies (with anything), immediately resume calling `calculate-sprint-data` for the same key — do not re-run extraction or LCT.
+> ⛔ Do NOT say "proceeding", "finalizing", or anything implying automatic continuation. The user must reply.
+> ✅ When the user replies (with anything), resume E-sprint for **all keys in the pending list** — finish the current key's PARTIAL loop first, then process every other pending key in order. Do not re-run extraction or LCT for any of them.
 
 ---
 
