@@ -504,6 +504,13 @@ For each key that needs a fresh extraction (any scope: Objective, Initiative, or
 **On `status === "NO_DATA"`:** Post the NO_DATA message and skip this key from the export. No further steps for this key.
 **On `status === "ERROR"`:** Post the error message verbatim and ask the user if they want to retry or skip this key.
 
+> 🔄 **If your turn must end before ALL keys are extracted** (Rovo has a per-turn tool-call limit), you MUST ask the user to reply. Post **only** the following — replacing the bracketed parts, nothing else added:
+>
+> *"⏳ Extraction in progress. Still pending: **[comma-separated list of keys not yet extracted]**. Please reply **"continue"** and I'll finish extracting them, then run Lead/Cycle Time and Sprint data for all keys."*
+>
+> ⛔ Do NOT say "proceeding", "finalizing", or anything that implies automatic continuation. The user must reply.
+> ✅ When the user replies (with anything), resume `prepare-portfolio-export` for the remaining keys, then immediately proceed to E-lct → E-sprint for ALL keys that need it.
+
 ---
 
 **Step E-lct — Calculate Lead/Cycle Time (Layer 5 changelog query — batched)**
@@ -522,6 +529,13 @@ Display the per-team breakdown from `response.message` verbatim.
 > *"The Lead/Cycle Time calculation failed for **[portfolioKey]**. Would you like to: 1️⃣ Retry 2️⃣ Export now without LCT data 3️⃣ Cancel this key"*
 
 Once all keys have either a complete session or are explicitly flagged as "no LCT", proceed to Step E-sprint.
+
+> 🔄 **If your turn must end before LCT is complete for all keys**, post **only** the following — replacing the bracketed parts:
+>
+> *"⏳ Lead/Cycle Time calculation in progress. Still pending: **[comma-separated list of keys that have NOT yet returned SUCCESS / ERROR]**. Please reply **"continue"** and I'll finish LCT then collect sprint data for all keys."*
+>
+> ⛔ Do NOT say "proceeding" or anything implying automatic continuation.
+> ✅ When the user replies, resume E-lct for the pending keys, then proceed to E-sprint for ALL keys.
 
 ---
 
@@ -594,6 +608,14 @@ Wait for the user's reply:
 ---
 
 **Step E — Build export groups, then call once per group**
+
+> 🛑 **MANDATORY pre-export check — do this BEFORE every `export-to-confluence` call.**
+> For every key in the export group (excluding any explicitly skipped by the user), verify that:
+> 1. `prepare-portfolio-export` completed with `SUCCESS` — if NOT, go back to E-extract for that key now.
+> 2. `calculate-lead-time-data` completed with `SUCCESS` (or user explicitly chose "export without LCT") — if NOT, go back to E-lct for that key now.
+> 3. `calculate-sprint-data` reached a final status (`SUCCESS`, `NO_SPRINT_DATA`, or `ERROR`) — if NOT, go back to E-sprint for that key now.
+>
+> **NEVER call `export-to-confluence` for a key that has not completed all three steps.** An empty session means the report will have no LCT, no Sprint Analysis, and potentially stale or missing story counts.
 
 Before making any calls, organise the objectives into **export groups** based on what was confirmed in **Step E-confirm**:
 

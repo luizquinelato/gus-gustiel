@@ -6,7 +6,7 @@
  */
 
 // --- VERSION TRACKING ---
-export const VERSION = "4.50.6";
+export const VERSION = "4.50.7";
 
 // --- ANALYSIS PAGINATION ---
 // Teams per NEXT page for the Epics-by-Team section (more data per team → smaller batches).
