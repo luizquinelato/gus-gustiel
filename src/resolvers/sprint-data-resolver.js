@@ -27,7 +27,8 @@
 import { storage }                                                    from '@forge/api';
 import { getCurrentAccountId, getEnvFromJira,
          getRecentBoardClosedSprints }                                from '../services/jira-api-service.js';
-import { makeSessionKey, ANALYSIS_SPRINT_TEAMS_PER_BATCH }           from '../config/constants.js';
+import { makeSessionKey, ANALYSIS_SPRINT_TEAMS_PER_BATCH,
+         SESSION_TTL }                                               from '../config/constants.js';
 import { fetchSprintReportsForTeams,
          discoverBoardIdForTeam }                                     from '../extractors/sprint-extractor.js';
 
@@ -133,7 +134,7 @@ export const calculateSprintData = async (event) => {
                 newestSprintIdByTeam,  // persist discovered teams so later batches include them
                 sprintTeamIndex: nextIndex,
                 sprintAcc:       newAcc,
-            });
+            }, SESSION_TTL);
         } catch (e) {
             return { status: 'ERROR', message: `Failed to save batch progress: ${e.message}` };
         }
@@ -153,7 +154,7 @@ export const calculateSprintData = async (event) => {
             sprintsByTeam:   newAcc,
             sprintTeamIndex: undefined,
             sprintAcc:       undefined,
-        });
+        }, SESSION_TTL);
         console.log(`[SprintData] ${portfolioKey} SUCCESS — ${Object.keys(newAcc).length}/${teamsWithSprints.length} teams written`);
     } catch (e) {
         return { status: 'ERROR', message: `Failed to save sprint results: ${e.message}` };

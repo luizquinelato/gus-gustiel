@@ -6,7 +6,12 @@
  */
 
 // --- VERSION TRACKING ---
-export const VERSION = "4.50.4";
+export const VERSION = "4.50.5";
+
+// Session TTL — 30 days in seconds. Passed as the third argument to every
+// storage.set() call so sessions auto-expire without manual cleanup.
+// Each write resets the clock, so active sessions stay alive indefinitely.
+export const SESSION_TTL = { ttl: { unit: 'SECONDS', value: 30 * 24 * 60 * 60 } };
 
 // --- ANALYSIS PAGINATION ---
 // Teams per NEXT page for the Epics-by-Team section (more data per team → smaller batches).

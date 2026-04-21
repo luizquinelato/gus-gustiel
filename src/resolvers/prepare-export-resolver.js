@@ -18,7 +18,7 @@
 import { storage }                                           from '@forge/api';
 import { getEnvFromJira, searchJira,
          getCurrentAccountId }                                from '../services/jira-api-service.js';
-import { PORTFOLIO_WORKFLOWS, makeSessionKey }                from '../config/constants.js';
+import { PORTFOLIO_WORKFLOWS, makeSessionKey, SESSION_TTL }   from '../config/constants.js';
 import { extractItem, extractStoryStatus, chunk,
          extractItemScope }                                   from '../extractors/jira-extractor.js';
 import { buildCountMap }                                      from '../transformers/portfolio-transformer.js';
@@ -105,7 +105,7 @@ export const preparePortfolioExport = async (event) => {
             try {
                 const prev = await storage.get(makeSessionKey(accountId, k)).catch(() => null);
                 const toSave = prev?.sprintsByTeam ? { ...sessionData, sprintsByTeam: prev.sprintsByTeam } : sessionData;
-                await storage.set(makeSessionKey(accountId, k), toSave);
+                await storage.set(makeSessionKey(accountId, k), toSave, SESSION_TTL);
             }
             catch (storeErr) { return { status: 'ERROR', message: `Failed to save session data for ${k}: ${storeErr.message}` }; }
         }
@@ -166,7 +166,7 @@ export const preparePortfolioExport = async (event) => {
             try {
                 const prev = await storage.get(makeSessionKey(accountId, k)).catch(() => null);
                 const toSave = prev?.sprintsByTeam ? { ...sessionDataI, sprintsByTeam: prev.sprintsByTeam } : sessionDataI;
-                await storage.set(makeSessionKey(accountId, k), toSave);
+                await storage.set(makeSessionKey(accountId, k), toSave, SESSION_TTL);
             }
             catch (storeErr) { return { status: 'ERROR', message: `Failed to save session data for ${k}: ${storeErr.message}` }; }
         }
@@ -262,7 +262,7 @@ export const preparePortfolioExport = async (event) => {
         try {
             const prev   = await storage.get(makeSessionKey(accountId, k)).catch(() => null);
             const toSave = prev?.sprintsByTeam ? { ...sessionData, sprintsByTeam: prev.sprintsByTeam } : sessionData;
-            await storage.set(makeSessionKey(accountId, k), toSave);
+            await storage.set(makeSessionKey(accountId, k), toSave, SESSION_TTL);
         } catch (storeErr) {
             return { status: 'ERROR', message: `Failed to save session data for ${k}: ${storeErr.message}` };
         }
