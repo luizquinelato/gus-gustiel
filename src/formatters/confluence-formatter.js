@@ -90,26 +90,34 @@ function parseTableRow(line) {
  * @returns {string}
  */
 /**
- * Background colours applied to the Status cell of epic tables.
+ * Background colours applied to the Status cell of status summary and epic tables.
  * Keyed by the exact Jira status name as it appears in the cell.
+ *
+ * Values are Confluence named highlight colours (not hex codes).
+ * Named colours are theme-aware in Confluence Cloud dark mode — they render
+ * with appropriate contrast in both light and dark themes.
+ * Hex codes bypass this mapping and always render as-is, causing light
+ * backgrounds with invisible light text in dark mode.
  */
 const STATUS_BG = {
-    'Backlog':                '#f0f0f0',   // light gray
-    'In Progress':            '#dbeafe',   // light blue
-    'Development':            '#dbeafe',   // light blue
-    'Deployed to Production': '#d1fae5',   // light green
-    'Released':               '#d1fae5',   // light green
+    'Backlog':                'light-grey',   // neutral / not started
+    'In Progress':            'light-blue',   // active
+    'Development':            'light-blue',   // active
+    'Deployed to Production': 'light-green',  // completed
+    'Released':               'light-green',  // completed
 };
 
 /**
  * Return attribute string for a <td> when the cell content matches a known
- * epic status.  Uses both the Confluence-native data-highlight-colour (which
- * survives the Cloud sanitiser) and a fallback inline style.
+ * status.  Uses the Confluence-native data-highlight-colour attribute which
+ * accepts named colours that adapt to dark mode.  No inline style fallback —
+ * named colours are not valid CSS colour values so the fallback would render
+ * as the wrong colour anyway.
  */
 function tdStyle(content) {
     const plain = content.trim();
     const bg    = STATUS_BG[plain];
-    return bg ? ` data-highlight-colour="${bg}" style="background-color: ${bg};"` : '';
+    return bg ? ` data-highlight-colour="${bg}"` : '';
 }
 
 /**
