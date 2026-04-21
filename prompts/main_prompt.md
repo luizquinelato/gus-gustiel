@@ -532,9 +532,9 @@ Once all keys have either a complete session or are explicitly flagged as "no LC
 For each key in sequence (all keys that reached this step — "use cache", "continue", or fresh), call `calculate-sprint-data` with:
 - `portfolioKey` = the key
 
-Large portfolios are automatically batched across multiple invocations. **Do NOT post any message to the user** until all keys are fully processed.
+Large portfolios are processed in batches across multiple Forge invocations. The loop must run silently — do not narrate progress.
 
-**On `status === "PARTIAL"`:** **Do NOT post any message.** Immediately call `calculate-sprint-data` again with the **same `portfolioKey`**. Repeat silently until the status is no longer `PARTIAL`. Do not move to the next key while looping.
+**On `status === "PARTIAL"`:** Do NOT post any message. Immediately call `calculate-sprint-data` again with the **same `portfolioKey`**. Repeat until the status is no longer `PARTIAL`. Do not move to the next key while looping.
 
 **On `status === "SUCCESS"`:** Mark this key's sprint as done. Move to the **next key** in the list. Do not proceed to E-confirm yet.
 
@@ -545,6 +545,10 @@ Large portfolios are automatically batched across multiple invocations. **Do NOT
 **On `status === "NO_SESSION"`:** Mark this key as "sprint error". Move to the **next key** in the list.
 
 Once **every key** has a final status (SUCCESS, NO_SPRINT_DATA, ERROR, or NO_SESSION), proceed silently to Step E-confirm.
+
+> 🔄 **If your turn must end mid-loop** (e.g. after a long extraction + LCT phase), post exactly this and nothing else:
+> *"⏳ Sprint data collection in progress for **[portfolioKey]** — say **continue** to resume."*
+> When the user replies with "continue" (or any acknowledgement), immediately resume the PARTIAL loop for that key — do not re-run extraction or LCT.
 
 ---
 
