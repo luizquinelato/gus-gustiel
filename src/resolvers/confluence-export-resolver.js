@@ -196,16 +196,35 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
         }
         if (allTeamsI.length > 0) {
             try {
-                const cached = await storage.get(makeSessionKey(accountId, portfolioKey));
-                if (cached?.phase === 'complete' && (Date.now() - cached.timestamp) < 86_400_000) {
+                // Session is stored under whichever key was used with prepare-portfolio-export —
+                // typically the parent objective. Try parent first, fall back to own key.
+                const initiativeParentKey = extractItem(scopeItems[0], fields).parentKey;
+                const sessionKeys = [
+                    ...(initiativeParentKey ? [makeSessionKey(accountId, initiativeParentKey)] : []),
+                    makeSessionKey(accountId, portfolioKey),
+                ];
+                const sessions = [];
+                for (const sk of sessionKeys) {
+                    const s = await storage.get(sk);
+                    if (s) sessions.push(s);
+                }
+                // Sprint data: take from first session that has it (no TTL — historical)
+                const sprintSession = sessions.find(s => s.sprintsByTeam);
+                if (sprintSession) sprintsByTeamI = sprintSession.sprintsByTeam;
+                // LCT: only from a recent, complete session
+                const cached = sessions.find(s => s.phase === 'complete' && (Date.now() - s.timestamp) < 86_400_000) || null;
+                if (cached) {
                     lctReadyI = true;
                     for (const team of allTeamsI) {
                         const v = cached.velocityByTeam?.[team];
-                        if (teamStatsI[team] && v) { teamStatsI[team].velocity = { averageDays: v.averageDays, epicCount: v.epicCount, zeroTimeKeys: v.zeroTimeKeys || [] }; teamStatsI[team].inProgressCount = v.inProgressCount ?? 0; teamStatsI[team].doneCount = v.doneCount ?? 0; }
+                        if (teamStatsI[team] && v) {
+                            teamStatsI[team].velocity        = { averageDays: v.averageDays, epicCount: v.epicCount, zeroTimeKeys: v.zeroTimeKeys || [] };
+                            teamStatsI[team].inProgressCount = v.inProgressCount ?? 0;
+                            teamStatsI[team].doneCount       = v.doneCount ?? 0;
+                        }
                         if (teamStatsI[team] && cached.lctByTeam?.[team]) teamStatsI[team].lct = cached.lctByTeam[team];
                     }
                     teamStatsI._overall = cached.overallVelocity || null;
-                    sprintsByTeamI      = cached.sprintsByTeam   || null;
                 }
             } catch (_) { /* LCT will show "No data" */ }
         }
@@ -477,32 +496,59 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
     const quarterLabel     = hasQuarterFilter ? ` — filtered by **${quarters.join(', ')}**` : '';
     const primaryKey       = allKeys[0];
 
-    // Fetch objective summary for each key (for titles)
-    const keyTitles = {};
+    // Fetch scope + parent key + title per key (single parallel batch — no extra round-trips)
+    const keyTitles   = {};
+    const scopeByKey  = {};
+    const parentByKey = {};
     await Promise.all(allKeys.map(async k => {
-        const items = await searchJira(`key = "${k}"`, ['summary']);
-        keyTitles[k] = items[0]?.fields?.summary || k;
+        const items = await searchJira(`key = "${k}"`, ['summary', 'issuetype', 'parent']);
+        keyTitles[k]  = items[0]?.fields?.summary || k;
+        if (items[0]) {
+            scopeByKey[k]  = extractItemScope(items[0]).scope;
+            parentByKey[k] = items[0].fields?.parent?.key || null;
+        }
     }));
 
-    // Layer 1: initiatives per key (run in parallel for speed)
-    const layer1PerKey = await Promise.all(
-        allKeys.map(k => searchJira(`(key = "${k}" OR parent = "${k}") ORDER BY issuetype DESC, status ASC`, fieldsToFetch))
-    );
+    // Route keys by scope: objective (or unknown) keys supply initiatives via children;
+    // initiative keys ARE Layer-1 items — their epics go straight to Layer 2.
+    const objectiveKeys  = allKeys.filter(k => scopeByKey[k] !== 'initiative');
+    const initiativeKeys = allKeys.filter(k => scopeByKey[k] === 'initiative');
 
-    // Combine all initiatives, tagging each with its sourceKey (the objective)
+    // Layer 1 — objective keys: fetch children → filter to non-key items = initiatives
+    const layer1PerObjective = objectiveKeys.length > 0
+        ? await Promise.all(objectiveKeys.map(k => searchJira(`(key = "${k}" OR parent = "${k}") ORDER BY issuetype DESC, status ASC`, fieldsToFetch)))
+        : [];
     let allInitiatives = [];
-    for (let i = 0; i < allKeys.length; i++) {
-        const k = allKeys[i];
-        const items = layer1PerKey[i].map(raw => extractItem(raw, fields));
+    for (let i = 0; i < objectiveKeys.length; i++) {
+        const k = objectiveKeys[i];
+        const items = layer1PerObjective[i].map(raw => extractItem(raw, fields));
         allInitiatives = allInitiatives.concat(items.filter(item => item.key !== k).map(item => ({ ...item, sourceKey: k })));
     }
+
+    // Layer 1 — initiative keys: initiative itself is the Layer-1 item; epics bypass Layer 2
+    let directEpics = [];
+    if (initiativeKeys.length > 0) {
+        await Promise.all(initiativeKeys.map(async k => {
+            const [initRaw, epicRaw] = await Promise.all([
+                searchJira(`key = "${k}"`, fieldsToFetch),
+                searchJira(`parent = "${k}" AND issuetype = Epic${quarterClause} ORDER BY status ASC`, fieldsToFetch),
+            ]);
+            const initItem = initRaw.map(r => extractItem(r, fields)).find(i => i.key === k);
+            if (initItem) allInitiatives.push({ ...initItem, sourceKey: k });
+            directEpics.push(...epicRaw.map(r => ({ ...extractItem(r, fields), sourceKey: k })));
+        }));
+    }
+
     if (allInitiatives.length === 0) return null;
 
-    // Layer 2: epics for all combined initiatives
-    const epicJql = `parent in (${allInitiatives.map(i => `"${i.key}"`).join(', ')}) AND issuetype = Epic${quarterClause} ORDER BY status ASC`;
+    // Layer 2: epics for initiatives that came from objective keys (initiative-key epics already collected)
     const initiativeToKey = Object.fromEntries(allInitiatives.map(i => [i.key, i.sourceKey]));
-    let allEpics = (await searchJira(epicJql, fieldsToFetch))
-        .map(raw => { const e = extractItem(raw, fields); return { ...e, sourceKey: initiativeToKey[e.parentKey] || primaryKey }; });
+    const objInitiatives  = allInitiatives.filter(i => objectiveKeys.includes(i.sourceKey));
+    let allEpics = objInitiatives.length > 0
+        ? (await searchJira(`parent in (${objInitiatives.map(i => `"${i.key}"`).join(', ')}) AND issuetype = Epic${quarterClause} ORDER BY status ASC`, fieldsToFetch))
+              .map(raw => { const e = extractItem(raw, fields); return { ...e, sourceKey: initiativeToKey[e.parentKey] || primaryKey }; })
+        : [];
+    allEpics = [...allEpics, ...directEpics];
 
     // Quarter filter: keep only initiatives that have qualifying epics
     const epicCountByInitiative = buildCountMap(allEpics, e => e.parentKey, e => e.statusCategoryKey === 'done');
@@ -563,9 +609,15 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
             teamStats[team] = { velocity: null, inProgressCount: 0, doneCount: 0, avgItemsPerEpic: avg, lct: null };
         }
         let combinedDays = 0, combinedCount = 0;
-        for (const key of allKeys) {
+        // For initiative keys, also try the parent (objective) session where LCT/Sprint is stored.
+        // Deduplicate so the same session is never read twice.
+        const sessionKeysToRead = [...new Set([
+            ...allKeys.map(k => makeSessionKey(accountId, k)),
+            ...allKeys.filter(k => parentByKey[k]).map(k => makeSessionKey(accountId, parentByKey[k])),
+        ])];
+        for (const sk of sessionKeysToRead) {
             try {
-                const cached = await storage.get(makeSessionKey(accountId, key));
+                const cached = await storage.get(sk);
                 if (!cached) continue;
 
                 // Sprint data: always read — historical metrics don't expire after 24h
