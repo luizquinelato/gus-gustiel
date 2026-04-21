@@ -21,7 +21,7 @@ import { storage }                                              from '@forge/api
 import { getEnvFromJira, searchJiraBatch,
          getCurrentAccountId }                                  from '../services/jira-api-service.js';
 import { PORTFOLIO_WORKFLOWS, LCT_PAGES_PER_BATCH,
-         makeSessionKey, SESSION_TTL }                          from '../config/constants.js';
+         makeSessionKey }                                       from '../config/constants.js';
 import { extractItemForLCT }                                   from '../extractors/jira-extractor.js';
 import { mergeItemsIntoLCTAccumulator, finalizeLCTAccumulator } from '../transformers/portfolio-transformer.js';
 
@@ -109,7 +109,7 @@ export const calculateLeadTimeData = async (event) => {
             lctItemsRead: newItemsRead,
         };
         try {
-            await storage.set(makeSessionKey(accountId, portfolioKey), partialSession, SESSION_TTL);
+            await storage.set(makeSessionKey(accountId, portfolioKey), partialSession);
         } catch (storeErr) {
             return { status: 'ERROR', message: `Failed to save partial LCT state: ${storeErr.message}` };
         }
@@ -141,7 +141,7 @@ export const calculateLeadTimeData = async (event) => {
     };
 
     try {
-        await storage.set(makeSessionKey(accountId, portfolioKey), completedSession, SESSION_TTL);
+        await storage.set(makeSessionKey(accountId, portfolioKey), completedSession);
     } catch (storeErr) {
         return { status: 'ERROR', message: `Failed to save LCT results: ${storeErr.message}` };
     }
