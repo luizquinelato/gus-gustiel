@@ -85,8 +85,9 @@ src/
   - `formatInnovationVelocityTable(teams, teamStats)`.
   - `formatInnovationVelocityByTeam(allTeams, teamStats, lctReady, velocityOnly)` — combined velocity + per-team bullet blocks. Pass `velocityOnly=true` to emit only the velocity legend, overall summary, and velocity table (no Lead/Cycle Time tables); used in the chat analysis resolver when the LCT section is rendered separately.
   - `formatLCTSection(allTeams, teamStats, lctReady, renderHeading)` — standalone Lead and Cycle Time section. Renders its own legend (Lead Time and Cycle Time definitions) at the top. When `renderHeading=true` (chat/default) emits a `### H3` heading and team sub-headings as `#### H4`; when `renderHeading=false` (Confluence, caller owns `## H2`) emits team sub-headings as `### H3` so Confluence TOC numbering is correct (5.1, 5.2… not 5.0.1, 5.0.2…).
-  - `formatSprintSection(allTeams, sprintsByTeam)` — Sprint Analysis H2 block for Confluence export. If all sprints for a team failed to load (GreenHopper unavailable), emits a sprint-name list with retry hint instead of an all-dash table. If some succeeded, keeps the table (partial data shown). If none found, emits a short info message.
-  - `formatTeamSprintChat(teamName, boardName, boardId, sprints)` — Sprint velocity table for chat. Same all-failed/partial/empty logic as `formatSprintSection`. Board name and numeric ID are shown in the board line.
+  - `formatSprintSection(allTeams, sprintsByTeam, trendsByTeam?)` — Sprint Analysis H2 block for Confluence export. Renders the velocity table per team followed by three H4 trend sub-sections (Velocity Trend, Scope Management, Predictability Score) when `trendsByTeam[team]` is present. Handles all-failed/partial/empty sprint states.
+  - `formatTeamSprintChat(teamName, boardName, boardId, sprints, trendData?)` — Sprint velocity table for chat. Same structure as `formatSprintSection` for a single team. Appends trend sub-sections when `trendData` is non-null; emits a "need 5 sprints" note when data is insufficient.
+  - `formatSprintTrendSections(trendData)` — Private helper shared by both sprint formatters. Renders the three H4 sub-sections with description blockquotes and metric tables from a `computeSprintTrends()` result object. Never called directly from resolvers.
 - **`confluence-formatter.js`** — Markdown → Confluence Storage Format (XHTML). Pure and stateless.
   - `buildTocMacro(minLevel, maxLevel)` — native Confluence TOC macro prepended to every exported page.
   - `buildAnchorMacro(anchorName)` — named anchor macro (default `"top"`) for `[⬆ Back to top](#top)` links.
@@ -108,7 +109,7 @@ src/
 - **`check-cache-resolver.js`** — Probes the session for a given key. Detects scope via `extractItemScope`. Returns `hasCachedData`, `phase`, `detectedScope`, `parentKey`, and `cachedAt` (formatted in `REPORT_TIMEZONE`). Treats sessions written by old code (no `detectedScope` field + empty `allTeams`) as stale.
 - **`creator-resolver.js`** — Static data only; no ETL pipeline. Exports `getAgentInfo` which returns the `GUSTIEL_CARD` constant. Called by the single `get-agent-info` action for both "Who are you?" and "Who is your creator?" questions. The card contains two image URL fields: `avatarImageUrl` (Gustiel's avatar shown inline at the top of the identity card) and `builtByImageUrl` (creator photo shown inline on the Built by line). Images are rendered as standard markdown `![alt](url)` — see **Image Rendering** section below.
 - **`sprint-data-resolver.js`** — ETL step 3. Reads the session written by `prepare-export-resolver`, calls `fetchSprintReportsForTeams` from `sprint-extractor.js` for all teams, writes `sprintsByTeam` back to the session. Returns `PARTIAL` while teams are being processed across multiple invocations, `SUCCESS` when complete, `NO_SESSION` when the session is missing.
-- **`team-sprint-resolver.js`** — Individual on-demand sprint analysis. Calls `discoverBoardIdForTeam` + `getRecentBoardClosedSprints` + `fetchSprintReportsForTeams` from the shared sprint extractor. Returns `{ status, team, board, boardId, sprints, message }` — `boardId` and `sprints[].name` allow Rovo to answer derived questions (board ID lookup, sprint name listing) without a separate skill.
+- **`team-sprint-resolver.js`** — Individual on-demand sprint analysis. Calls `discoverBoardIdForTeam` + `getRecentBoardClosedSprints` + `fetchSprintReportsForTeams` (extract), then `computeSprintTrends` (transform), then `formatTeamSprintChat` (load). Returns `{ status, team, board, boardId, sprints, trendData, message }` — `boardId`, `sprints[].name`, and `trendData` allow Rovo to answer derived questions without a separate skill.
 - **`skill-docs-resolver.js`** — Exports a comprehensive Confluence page documenting all Gustiel skills, usage examples, access levels, the ETL pipeline, Jira hierarchy support, and session cache. Uses `buildCustomTable` for explicit colspan control in the ETL and hierarchy tables. Same upsert/folder/path logic as `confluence-export-resolver`.
 - **`storage-admin-resolver.js`** — Multi-path storage management. Admins: list all keys, read any key, wipe all storage, manage the admin registry. Non-admins: list/read only their own `export_session:<accountId>:*` keys. Uses `makeSessionKey` prefix check as the security boundary. Uses `startsWith` from Forge Storage query API for efficient per-user key filtering.
 
@@ -154,9 +155,10 @@ All four questions use the same action. The resolver fetches and parses the data
 1. **Resolver** — return all fields the ETL pipeline already computed, not just those used by `response.message`.
 2. **Prompt routing section** — document every response field by name and describe which user questions map to it. Example:
    ```
-   response.message   → full sprint table (display verbatim)
-   response.boardId   → answer "what board is X on?" or "board ID for X?"
-   response.sprints[].name → answer "list sprint names for X"
+   response.message         → full sprint table + trend sections (display verbatim)
+   response.boardId         → answer "what board is X on?" or "board ID for X?"
+   response.sprints[].name  → answer "list sprint names for X"
+   response.trendData       → structured analytics; Rovo generates insights on demand
    ```
 3. **Skill description in the prompt help list** — mention the derived question types alongside the primary use case so users discover them.
 4. **Skill Documentation export** — include the derived capabilities in the trigger phrase list for that skill section.
@@ -213,6 +215,7 @@ portfolio-report-resolver.js   ← entry/exit only
     │   groupByStatusOrdered()    ← transformers/portfolio-transformer.js
     │   filterOverdue()           ← transformers/portfolio-transformer.js
     │   calculateLeadTime()       ← transformers/portfolio-transformer.js
+    │   computeSprintTrends()     ← transformers/portfolio-transformer.js
     │
     ├─ LOAD ─────────────────────────────────────────────────
     │   formatProgress()              ← formatters/markdown-formatter.js

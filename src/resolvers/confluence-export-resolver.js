@@ -24,7 +24,7 @@ import { PORTFOLIO_WORKFLOWS, REPORT_TIMEZONE,
 import { extractItem, extractStoryStatus, chunk,
          extractItemScope }                                   from '../extractors/jira-extractor.js';
 import { groupByStatusOrdered, buildCountMap,
-         filterOverdue }                                     from '../transformers/portfolio-transformer.js';
+         filterOverdue, computeSprintTrends }                from '../transformers/portfolio-transformer.js';
 import { formatProgress, formatStatusTable,
          formatStoryStatusTable, formatInitiativeTable,
          formatEpicsByTeam,
@@ -33,6 +33,21 @@ import { formatProgress, formatStatusTable,
          EPIC_RYG_LEGEND }                                   from '../formatters/markdown-formatter.js';
 import { markdownToStorage, buildTocMacro,
          buildAnchorMacro }                                   from '../formatters/confluence-formatter.js';
+
+// ── Private helper — builds a trendsByTeam map from sprintsByTeam ─────────────
+// Resolver is thin: just maps computeSprintTrends() across all teams.
+// Returns null when sprintsByTeam is null/empty.
+function buildTrendsByTeam(teams, sprintsByTeam) {
+    if (!sprintsByTeam || !teams || teams.length === 0) return null;
+    const result = {};
+    for (const team of teams) {
+        const data = sprintsByTeam[team];
+        if (!data || data.error || !Array.isArray(data.sprints)) continue;
+        const validSprints = data.sprints.filter(s => !s.error);
+        result[team] = computeSprintTrends(validSprints);
+    }
+    return result;
+}
 
 // ── Private helper — full ETL for one portfolio key ──────────────────────────
 // Returns { portfolioKey, objectiveTitle, markdown, counts, overdueCount }
@@ -135,7 +150,7 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
             '',
             '## 🏃 Sprint Analysis',
             '',
-            formatSprintSection(allTeamsE, sprintsByTeamE),
+            formatSprintSection(allTeamsE, sprintsByTeamE, buildTrendsByTeam(allTeamsE, sprintsByTeamE)),
             '',
             '[⬆ Back to top](#top)',
         ].join('\n');
@@ -235,7 +250,7 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
             '',
             '## 🏃 Sprint Analysis',
             '',
-            formatSprintSection(allTeamsI, sprintsByTeamI),
+            formatSprintSection(allTeamsI, sprintsByTeamI, buildTrendsByTeam(allTeamsI, sprintsByTeamI)),
             '',
             '[⬆ Back to top](#top)',
         ].join('\n');
@@ -435,7 +450,7 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
         '',
         '## 🏃 Sprint Analysis',
         '',
-        formatSprintSection(allTeams, sprintsByTeam),
+        formatSprintSection(allTeams, sprintsByTeam, buildTrendsByTeam(allTeams, sprintsByTeam)),
         '',
         '[⬆ Back to top](#top)',
     ].join('\n');
@@ -635,7 +650,7 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
         '',
         '## 🏃 Sprint Analysis',
         '',
-        formatSprintSection(allTeams, sprintsByTeam),
+        formatSprintSection(allTeams, sprintsByTeam, buildTrendsByTeam(allTeams, sprintsByTeam)),
         '',
         '[⬆ Back to top](#top)',
     ].join('\n');

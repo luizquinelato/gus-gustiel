@@ -17,6 +17,7 @@ import { getEnvFromJira,
          getRecentBoardClosedSprints }         from '../services/jira-api-service.js';
 import { discoverBoardIdForTeam,
          fetchSprintReportsForTeams }          from '../extractors/sprint-extractor.js';
+import { computeSprintTrends }                from '../transformers/portfolio-transformer.js';
 import { formatTeamSprintChat }               from '../formatters/markdown-formatter.js';
 
 export const getTeamSprintAnalysis = async (event) => {
@@ -69,10 +70,14 @@ export const getTeamSprintAnalysis = async (event) => {
             return { status: 'ERROR', message: `Sprint report error for **${teamName}**: ${teamError}` };
         }
 
-        // ── LOAD — render chat table
-        const message = formatTeamSprintChat(teamName, boardName, boardId, sprints);
+        // ── TRANSFORM — compute trend analytics (requires ≥5 valid sprints)
+        const validSprints = (sprints || []).filter(s => !s.error);
+        const trendData    = computeSprintTrends(validSprints);
 
-        return { status: 'SUCCESS', team: teamName, board: boardName, boardId, sprints, message };
+        // ── LOAD — render chat table + trend sections
+        const message = formatTeamSprintChat(teamName, boardName, boardId, sprints, trendData);
+
+        return { status: 'SUCCESS', team: teamName, board: boardName, boardId, sprints, trendData, message };
 
     } catch (e) {
         console.error(`[TeamSprintAnalysis] Error for "${teamName}": ${e.message}`);

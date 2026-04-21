@@ -547,7 +547,7 @@ export function formatLCTSection(allTeams, teamStats, lctReady = false, renderHe
  * @param {Object}   sprintsByTeam  - { [team]: { boardId, boardName, sprints[], error?, warning? } }
  * @returns {string}                - Markdown string for the full section body
  */
-export function formatSprintSection(allTeams, sprintsByTeam) {
+export function formatSprintSection(allTeams, sprintsByTeam, trendsByTeam = null) {
     if (!sprintsByTeam || Object.keys(sprintsByTeam).length === 0) {
         return '> ⚠️ **Sprint data not available.** Run `calculate-sprint-data` after `calculate-lead-time-data` to populate this section.';
     }
@@ -556,7 +556,7 @@ export function formatSprintSection(allTeams, sprintsByTeam) {
         '> ⚠️ *Sprint history sourced from each team\'s most recently active board. ' +
         'If a team migrated boards during this period, earlier sprints from the previous board are not captured.*';
 
-    const HEADER = '| Sprint | Planned | Added | Removed | ✅ Velocity | 🔄 Rolled Over | Say/Do |';
+    const HEADER = '| 🗓️ Sprint | 📋 Planned | ➕ Added | ➖ Removed | ✅ Velocity | 🔄 Rolled Over | 🎯 Say/Do |';
     const DIVIDER = '|---|---|---|---|---|---|---|';
 
     // Renders a SP cell. When items lack estimates, the note appears on a second line
@@ -622,6 +622,11 @@ export function formatSprintSection(allTeams, sprintsByTeam) {
             }
         }
 
+        const trendSections = formatSprintTrendSections(trendsByTeam?.[team] ?? null);
+        const trendNote = !trendSections && validSprints.length > 0 && validSprints.length < 5
+            ? `\n> ℹ️ *Trend analysis requires at least 5 closed sprints. ${validSprints.length} found — collect more data to unlock Velocity Trend, Scope Management, and Predictability Score.*`
+            : '';
+
         sections.push([
             header,
             HEADER,
@@ -629,6 +634,8 @@ export function formatSprintSection(allTeams, sprintsByTeam) {
             ...data.sprints.map(spRow),
             summary,
             reEstimNote,
+            trendNote,
+            trendSections,
             '---',
             '',
         ].join('\n'));
@@ -666,19 +673,76 @@ export function formatTeamEfficiencyTable(allTeams, teamStats) {
 
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Private helper — renders the three trend analysis sections from a trendData
+// object returned by computeSprintTrends(). Used by both chat and Confluence
+// export formatters so the logic is never duplicated.
+// ─────────────────────────────────────────────────────────────────────────────
+function formatSprintTrendSections(trendData) {
+    if (!trendData) return '';
+
+    const { velocity, scope, carryOver, predictability, sprintCount } = trendData;
+
+    const dirArrow = velocity.direction === 'UP' ? ' ⬆️' : velocity.direction === 'DOWN' ? ' ⬇️' : '';
+
+    const lines = [
+        '',
+        '#### 📈 Velocity Trend',
+        '> *Measures how consistent and stable the team\'s delivery rate is over time. '
+        + 'A stable velocity makes forecasting reliable; high variation signals unpredictability.*',
+        '',
+        `| Metric | Value |`,
+        `|---|---|`,
+        `| Sprints analysed | ${sprintCount} |`,
+        `| Average velocity | **${velocity.overallAvg} SP/sprint** |`,
+        `| Variation (CV) | ${velocity.stabilityRag} ${velocity.cv}% |`,
+        `| Direction | ${velocity.stabilityRag}${dirArrow} avg first-3: ${velocity.avgFirst3} SP → avg last-3: ${velocity.avgLast3} SP |`,
+        '',
+        '#### 🔀 Scope Management',
+        '> *Tracks how much the sprint scope changed after it started. '
+        + 'Low churn (≤20%) means the team commits to a plan and sticks to it. '
+        + 'Addition completion rate shows whether added work is actually finished or becomes carry-over.*',
+        '',
+        `| Metric | Value |`,
+        `|---|---|`,
+        `| Avg scope churn | ${scope.churnRag} ${scope.avgChurnPct}% of planned SP added or removed per sprint |`,
+        scope.additionCompletionPct !== null
+            ? `| Additions completed | ${scope.additionCompletionRag} ${scope.additionCompletionPct}% of mid-sprint additions were delivered |`
+            : `| Additions completed | — *(no mid-sprint additions recorded)* |`,
+        `| Avg carry-over | ${carryOver.rag} ${carryOver.avgPct}% of planned SP rolled to next sprint |`,
+        '',
+        '#### 🎯 Predictability Score',
+        '> *Combines velocity stability, carry-over rate, and scope churn into a single score. '
+        + '🟢 = 2 pts · 🟡 = 1 pt · 🔴 = 0 pts · max = 6 pts. '
+        + 'High ≤20% behind ideal · Medium 20–50% · Low >50%.*',
+        '',
+        `| Dimension | Signal | Weight |`,
+        `|---|---|---|`,
+        `| Velocity stability | ${velocity.stabilityRag} CV ${velocity.cv}% | ${velocity.stabilityRag === '🟢' ? 2 : velocity.stabilityRag === '🟡' ? 1 : 0} |`,
+        `| Carry-over rate | ${carryOver.rag} ${carryOver.avgPct}% | ${carryOver.rag === '🟢' ? 2 : carryOver.rag === '🟡' ? 1 : 0} |`,
+        `| Scope churn | ${scope.churnRag} ${scope.avgChurnPct}% | ${scope.churnRag === '🟢' ? 2 : scope.churnRag === '🟡' ? 1 : 0} |`,
+        `| **Total** | | **${predictability.score} / 6** |`,
+        '',
+        `**${predictability.rag} ${predictability.label} Predictability** — ${predictability.pctBehind}% behind ideal`,
+    ];
+
+    return lines.join('\n');
+}
+
 /**
  * Renders per-team sprint metrics as a Markdown table for chat output.
  * Uses GreenHopper data shape from parseGreenHopperSprintReport().
  *
- * Columns: Sprint | Planned | Added | Removed | Velocity | Rolled Over | Say/Do
+ * Columns: 🗓️ Sprint | 📋 Planned | ➕ Added | ➖ Removed | ✅ Velocity | 🔄 Rolled Over | 🎯 Say/Do
  *
  * @param {string}   teamName  - Display name of the agile team.
  * @param {string}   boardName - Board name resolved via getBoardById().
  * @param {string}   boardId   - Numeric board ID (for reference and debugging).
  * @param {Object[]} sprints   - Array produced by parseGreenHopperSprintReport().
+ * @param {Object|null} trendData - Output of computeSprintTrends(); null if < 5 sprints.
  * @returns {string} Markdown string ready for Rovo chat output.
  */
-export function formatTeamSprintChat(teamName, boardName, boardId, sprints) {
+export function formatTeamSprintChat(teamName, boardName, boardId, sprints, trendData = null) {
     if (!sprints || sprints.length === 0) {
         return `## 🏃 Sprint Analysis — ${teamName}\n\n_No sprint data available for the last 6 months._`;
     }
@@ -711,7 +775,7 @@ export function formatTeamSprintChat(teamName, boardName, boardId, sprints) {
         `## 🏃 Sprint Analysis — ${teamName}`,
         boardLabel ? `> 📋 **Board:** ${boardLabel}` : '',
         '',
-        '| Sprint | Planned | Added | Removed | ✅ Velocity | 🔄 Rolled Over | Say/Do |',
+        '| 🗓️ Sprint | 📋 Planned | ➕ Added | ➖ Removed | ✅ Velocity | 🔄 Rolled Over | 🎯 Say/Do |',
         '|--------|:-------:|:-----:|:-------:|:-----------:|:--------------:|:------:|',
     ].filter(Boolean);
 
@@ -731,6 +795,13 @@ export function formatTeamSprintChat(teamName, boardName, boardId, sprints) {
         const avgEmoji    = avgSayDo >= 0.8 ? '🟢' : avgSayDo >= 0.5 ? '🟡' : '🔴';
         lines.push('');
         lines.push(`> **Avg Velocity:** ${avgVelocity} SP/sprint · **Avg Say/Do:** ${avgEmoji} ${Math.round(avgSayDo * 100)}%`);
+    }
+
+    const trendSections = formatSprintTrendSections(trendData);
+    if (trendSections) lines.push(trendSections);
+    else if (validSprints.length > 0 && validSprints.length < 5) {
+        lines.push('');
+        lines.push(`> ℹ️ *Trend analysis requires at least 5 closed sprints. ${validSprints.length} found — collect more data to unlock Velocity Trend, Scope Management, and Predictability Score.*`);
     }
 
     return lines.join('\n');

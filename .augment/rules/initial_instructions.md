@@ -8,6 +8,18 @@ Rules the agent must follow in every session for this project.
 
 ---
 
+## Deployment Rule
+
+When asked to deploy, **always deploy to dev** by running:
+
+```powershell
+.\deploy.ps1
+```
+
+No arguments. Never use `--prod` or `--all` unless explicitly instructed by the user.
+
+---
+
 ## Versioning Rule
 
 The app version is defined in `src/config/constants.js` as `export const VERSION = "X.Y.Z"`.

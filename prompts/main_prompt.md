@@ -679,12 +679,38 @@ Call `get-team-sprint-analysis` with:
 - `teamName` = the team name exactly as the user stated it (e.g. "Titan", "Comet", "Vanguard")
 
 **Response fields available (all on `status === "SUCCESS"`):**
-- `response.message` — pre-formatted table; display verbatim for full sprint reports
+- `response.message` — pre-formatted Markdown (table + trend sections); display verbatim for full sprint reports
 - `response.sprints[].name` — list of sprint names; use to answer *"what were the sprint names?"*
 - `response.boardId` — numeric board ID; use to answer *"what's the board ID for X?"*
 - `response.board` — board display name
+- `response.trendData` — structured trend analytics object (present when ≥5 valid sprints exist; `null` otherwise)
 
-**On `status === "SUCCESS"`:** Display `response.message` verbatim. Do not paraphrase, condense, or summarise the table. For targeted questions (e.g. *"just the sprint names"*, *"what board?"*) you may answer directly from the relevant response field without showing the full table.
+**`trendData` structure** (use for natural language insights when the user asks *"how is the team doing?"* or *"what do the trends say?"*):
+```
+trendData.sprintCount                          — number of sprints analysed
+trendData.velocity.overallAvg                  — average SP delivered per sprint
+trendData.velocity.cv                          — coefficient of variation (%), lower = more stable
+trendData.velocity.stabilityRag                — 🟢/🟡/🔴 velocity stability signal
+trendData.velocity.direction                   — "UP" | "DOWN" | null (≥10% change first-3 vs last-3)
+trendData.velocity.avgFirst3 / avgLast3        — avg SP of earliest and most recent 3 sprints
+trendData.scope.avgChurnPct                    — avg % of planned SP added or removed per sprint
+trendData.scope.churnRag                       — 🟢/🟡/🔴 scope churn signal
+trendData.scope.additionCompletionPct          — % of mid-sprint additions that were delivered (null = no additions)
+trendData.scope.additionCompletionRag          — 🟢/🟡/🔴 for additions completion (null = no data)
+trendData.carryOver.avgPct                     — avg % of planned SP carried to next sprint
+trendData.carryOver.rag                        — 🟢/🟡/🔴 carry-over signal
+trendData.predictability.score                 — weighted score (0–6): 🟢=2, 🟡=1, 🔴=0 per dimension
+trendData.predictability.pctBehind             — % below ideal (0%=perfect, 100%=all red)
+trendData.predictability.rag                   — 🟢 ≤20% / 🟡 20–50% / 🔴 >50%
+trendData.predictability.label                 — "High" | "Medium" | "Low"
+```
+
+**On `status === "SUCCESS"`:** Display `response.message` **verbatim — including all blockquotes, tables, and sub-section headers**. Do not paraphrase, condense, reformat, or summarise any part of it. Do not add your own "Interpretation:" label or rewrite the trend sections — the description blockquotes (e.g. *"Measures how consistent…"*) and the metric tables are already embedded in the message and must be shown as-is. For targeted questions (e.g. *"just the sprint names"*, *"what board?"*) you may answer directly from the relevant response field without showing the full message.
+
+**Adding insights on top of the verbatim output:** Only after displaying `response.message` in full, if the user explicitly asks for analysis, interpretation, or recommendations, use the `trendData` fields to generate concise, specific prose. Examples:
+- *"The team's velocity has been stable (CV 12%) but trending downward — average dropped from 42 SP in early sprints to 35 SP recently."*
+- *"Scope churn is elevated at 38%, meaning more than a third of planned work is being swapped in or out each sprint. Consider a firmer sprint commitment process."*
+- *"Predictability score is 4/6 (🟡 Medium) — the main drag is carry-over (28% of planned SP rolled over on average)."*
 
 **On `status === "NO_DATA"`:** Display the message from `response.message` verbatim and suggest the user verify the team name or check that stories are assigned to sprint boards.
 

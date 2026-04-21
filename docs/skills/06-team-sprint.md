@@ -8,6 +8,11 @@
 
 Delivers an instant sprint velocity report for a **single agile team** — no portfolio key required. Returns the last 6 closed sprints with velocity, say/do ratio, rolled-over story points, and sprint names, sourced directly from the Jira board (GreenHopper API).
 
+When ≥5 closed sprints are available, the report also includes three advanced analytics sections:
+- **📈 Velocity Trend** — stability (coefficient of variation) + direction (first-3 vs last-3 avg, flagged at ≥10% change)
+- **🔀 Scope Management** — avg scope churn rate + additions completion rate
+- **🎯 Predictability Score** — weighted composite: 🟢=2 · 🟡=1 · 🔴=0 per dimension, max 6 pts
+
 This skill works **independently** — it never requires a prior portfolio extraction or any cached session.
 
 ---
@@ -30,12 +35,13 @@ This skill works **independently** — it never requires a prior portfolio extra
 
 | Field | Use |
 |---|---|
-| `response.message` | Pre-formatted Markdown table — display verbatim for full sprint reports |
+| `response.message` | Pre-formatted Markdown (table + trend sub-sections) — display verbatim |
 | `response.sprints[].name` | List of sprint names — answer *"what were the sprint names?"* |
 | `response.boardId` | Numeric board ID — answer *"what's the board ID for X?"* |
 | `response.board` | Board display name |
+| `response.trendData` | Structured trend analytics object — present when ≥5 valid sprints; `null` otherwise. Used by Rovo to generate natural language insights on demand. |
 
-All four fields are populated from a **single action call**. Rovo selects the relevant field per question type. See the **Response Reuse Pattern** in `docs/architecture.md`.
+All five fields are populated from a **single action call**. Rovo selects the relevant field per question type. See the **Response Reuse Pattern** in `docs/architecture.md`.
 
 ---
 
@@ -44,18 +50,26 @@ All four fields are populated from a **single action call**. Rovo selects the re
 ```
 team-sprint-resolver.js (thin orchestrator)
     │
-    ├─ discoverBoardIdForTeam(teamName, ...)     ← sprint-extractor.js
+    ├─ EXTRACT: discoverBoardIdForTeam(teamName, ...)     ← sprint-extractor.js
     │   Two-pass JQL: finds boardId from open + closed sprint issues
     │
-    ├─ getRecentBoardClosedSprints(boardId, 6)   ← jira-api-service.js
+    ├─ EXTRACT: getRecentBoardClosedSprints(boardId, 6)   ← jira-api-service.js
     │   Board API — lists last 6 closed sprint IDs
     │
-    └─ fetchSprintReportsForTeams(teams, ...)     ← sprint-extractor.js
-        GreenHopper sprint reports per sprint
-        Bounded by shared semaphore (max 3 concurrent) ← concurrency.js
+    ├─ EXTRACT: fetchSprintReportsForTeams(teams, ...)     ← sprint-extractor.js
+    │   GreenHopper sprint reports per sprint
+    │   Bounded by shared semaphore (max 3 concurrent) ← concurrency.js
+    │
+    ├─ TRANSFORM: computeSprintTrends(validSprints)       ← portfolio-transformer.js
+    │   Pure function — velocity trend, scope management, predictability score
+    │   Returns null when < 5 valid sprints
+    │
+    └─ LOAD: formatTeamSprintChat(teamName, boardName, boardId, sprints, trendData)
+        ← markdown-formatter.js
+        Renders sprint table + trend sub-sections (####) as a single Markdown string
 ```
 
-**Key point:** `fetchSprintReportsForTeams` is the same function used by the portfolio pipeline's Step 3 (`sprint-data-resolver.js`). There is one implementation, shared by both. Any fix to sprint report fetching applies to both the individual skill and the portfolio — by design.
+**Key point:** `fetchSprintReportsForTeams` and `computeSprintTrends` are the same functions used by the portfolio pipeline. There is one implementation, shared by both. Any fix to sprint fetching or trend logic applies to both — by design.
 
 ---
 
