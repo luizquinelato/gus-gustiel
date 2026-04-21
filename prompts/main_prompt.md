@@ -472,6 +472,9 @@ The response always includes `detectedScope` (`objective`, `initiative`, `epic`,
 > The session is always stored under the exact key provided, so LCT data will be found correctly
 > during export regardless of scope level.
 
+> ⚠️ **"Fresh" trigger words — skip the question entirely.**
+> If the user's request contains any of: *"fresh"*, *"redo"*, *"force refresh"*, *"overwrite"*, *"start from scratch"*, *"restart"*, *"new report"*, *"ignore cache"* — treat their choice as **"start fresh extraction"** for ALL keys, regardless of cache state. Do NOT ask. Do NOT show the cache summary. Proceed directly to **Step E-extract**.
+
 **Decision table — applies for all `detectedScope` values (`objective`, `initiative`, `epic`):**
 
 | `hasCachedData` | `phase` | What to tell the user |
@@ -522,12 +525,14 @@ Once all keys have either a complete session or are explicitly flagged as "no LC
 
 ---
 
-**Step E-sprint — Calculate Sprint Data (single call — no batching)**
+**Step E-sprint — Calculate Sprint Data (batched — same silent loop as E-lct)**
 
 For each key that completed E-lct successfully, call `calculate-sprint-data` with:
 - `portfolioKey` = the key
 
-This step collects the last 6 closed sprints per team in a single parallel invocation. It always returns `SUCCESS`, `NO_SPRINT_DATA`, `NO_SESSION`, or `ERROR` — never `PARTIAL`. Do NOT post any message to the user regardless of outcome until all keys have been processed.
+Large portfolios (many teams) are processed in batches across multiple Forge invocations to avoid the 25 s timeout. **Do NOT post any message to the user** regardless of outcome until all keys have been processed.
+
+**On `status === "PARTIAL"`:** **Do NOT post any message.** Immediately call `calculate-sprint-data` again with the same `portfolioKey`. Repeat silently until `status` is `"SUCCESS"`, `"NO_SPRINT_DATA"`, or `"ERROR"`.
 
 **On `status === "SUCCESS"`:** No message needed — proceed silently to E-confirm.
 
