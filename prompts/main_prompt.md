@@ -546,9 +546,12 @@ Large portfolios are processed in batches across multiple Forge invocations. The
 
 Once **every key** has a final status (SUCCESS, NO_SPRINT_DATA, ERROR, or NO_SESSION), proceed silently to Step E-confirm.
 
-> 🔄 **If your turn must end mid-loop** (e.g. after a long extraction + LCT phase), post exactly this and nothing else:
-> *"⏳ Sprint data collection in progress for **[portfolioKey]** — say **continue** to resume."*
-> When the user replies with "continue" (or any acknowledgement), immediately resume the PARTIAL loop for that key — do not re-run extraction or LCT.
+> 🔄 **If your turn must end before sprint collection is complete** (this is normal after a long extraction + LCT phase — Rovo has a per-turn tool-call limit), you MUST ask the user to reply before you can continue. Post **only** the following — word for word, no additions:
+>
+> *"⏳ Sprint data collection is running for **[portfolioKey]**. This step processes teams in batches and needs one more moment. Please reply **"continue"** and I'll finish collecting and then export your report."*
+>
+> ⛔ Do NOT say "proceeding", "finalizing", or anything that implies automatic continuation. The user must reply for the next turn to start.
+> ✅ When the user replies (with anything), immediately resume calling `calculate-sprint-data` for the same key — do not re-run extraction or LCT.
 
 ---
 
