@@ -119,11 +119,10 @@ export const calculateSprintData = async (event) => {
             return { status: 'ERROR', message: `Failed to save batch progress: ${e.message}` };
         }
         return {
-            status:      'PARTIAL',
+            status:     'PARTIAL',
             portfolioKey,
-            batchDone:   nextIndex,
-            totalTeams:  teamsWithSprints.length,
-            message:     `⏳ Sprint data: ${nextIndex}/${teamsWithSprints.length} teams processed — continuing…`,
+            batchDone:  nextIndex,
+            totalTeams: teamsWithSprints.length,
         };
     }
 
