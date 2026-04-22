@@ -242,7 +242,33 @@ export function buildCustomTable(headers, bodyRows, colspans) {
  * @param {string} markdown
  * @returns {string} Confluence storage format HTML string
  */
+// Map common fenced-code-block language hints to Confluence-supported identifiers.
+// Keys are lowercase; anything not listed falls back to 'none' (plain text).
+const LANG_MAP = {
+    js:         'javascript',
+    javascript: 'javascript',
+    ts:         'javascript',
+    typescript: 'javascript',
+    java:       'java',
+    python:     'python',
+    py:         'python',
+    bash:       'bash',
+    sh:         'bash',
+    sql:        'sql',
+    yaml:       'none',
+    yml:        'none',
+    json:       'javascript',
+    css:        'css',
+    html:       'html/xml',
+    xml:        'html/xml',
+    powershell: 'powershell',
+    ps1:        'powershell',
+};
+
 export function markdownToStorage(markdown) {
+    // Normalize line endings — docs may originate from Windows (CRLF) or Unix (LF).
+    markdown = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
     const lines = markdown.split('\n');
     const html  = [];
     let i = 0;
@@ -342,6 +368,31 @@ export function markdownToStorage(markdown) {
                 i++;
             }
             html.push(renderTable(headers, bodyRows));
+            continue;
+        }
+
+        // Fenced code block: ``` (with optional language hint) … ```
+        // Rendered using Confluence's native code macro so content is preserved verbatim
+        // and the Fabric editor does not reject it as an "unsupported extension".
+        if (trimmed.startsWith('```')) {
+            const rawLang  = trimmed.slice(3).trim().toLowerCase();
+            const lang     = LANG_MAP[rawLang] || (rawLang ? 'none' : 'none');
+            i++; // skip opening fence
+            const codeLines = [];
+            while (i < lines.length && !lines[i].trim().startsWith('```')) {
+                codeLines.push(lines[i]);
+                i++;
+            }
+            i++; // skip closing fence
+            const codeContent = codeLines.join('\n');
+            const langParam   = `\n  <ac:parameter ac:name="language">${lang}</ac:parameter>`;
+            // CDATA safely wraps any special chars; ]]> cannot appear inside CDATA — acceptable
+            // for documentation code blocks.
+            html.push(
+                `<ac:structured-macro ac:name="code" ac:schema-version="1">${langParam}\n` +
+                `  <ac:plain-text-body><![CDATA[${codeContent}]]></ac:plain-text-body>\n` +
+                `</ac:structured-macro>`
+            );
             continue;
         }
 

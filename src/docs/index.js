@@ -1,5 +1,5 @@
 // AUTO-GENERATED — do not edit manually.
-// Generated: 2026-04-22T12:48:07.942Z
+// Generated: 2026-04-22T13:37:23.211Z
 // Source:    docs/  —  run ".\deploy.ps1 --docs" to regenerate.
 // Imported by skill-docs-resolver.js and architecture-guide-resolver.js.
 
