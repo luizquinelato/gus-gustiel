@@ -1,30 +1,25 @@
-# Skills 04 & 05 — Portfolio Report (Confluence + Chat)
+# Skill 04 — Portfolio Report
 
 ## 📋 User Guide
 
 ### What It Does
 
-Delivers a full portfolio health report for one or more Jira portfolio keys. You choose the output:
-- **Skill 04 — Confluence export:** creates or updates a permanent Confluence page with all data
-- **Skill 05 — Chat analysis:** walks through the same data interactively in conversation, section by section
+Delivers a full portfolio health report for one or more Jira portfolio keys, exported directly to a Confluence page. The report covers the full Jira hierarchy (Objective → Initiative → Epic → Story) and includes:
 
-The report covers the full Jira hierarchy (Objective → Initiative → Epic → Story) and includes:
 - Initiative and epic progress (current %, expected %, Red/Yellow/Green status)
 - Epics grouped by team
-- Innovation Velocity (throughput) and Lead / Cycle Time per team
+- Lead / Cycle Time per team
 - Sprint velocity analysis per team (last 6 closed sprints)
 
 This is Gustiel's flagship skill and the most comprehensive view of portfolio health.
 
 ### How to Trigger It
 
-| Mode | Example phrases |
+| Example phrases | Result |
 |---|---|
-| Ambiguous (Gustiel asks first) | *"Analyze WX-1145"*, *"What's the status of WX-1145?"*, *"Show me WX-1145"* |
-| Chat explicit | *"Analyze WX-1145 in chat"*, *"Portfolio report in chat for WX-1145"* |
-| Confluence explicit | *"Export WX-1145 to Confluence"*, *"Give me a full report for WX-1145"* |
-
-When the intent is ambiguous, Gustiel always asks whether you want chat or Confluence before proceeding.
+| *"Analyze WX-1145"*, *"What's the status of WX-1145?"* | Full Confluence report |
+| *"Export WX-1145 to Confluence"*, *"Give me a full report for WX-1145"* | Full Confluence report |
+| *"Portfolio report for WX-1145"* | Full Confluence report |
 
 ### Scope Support
 
@@ -48,11 +43,11 @@ You can analyze multiple portfolio keys together:
 
 ### Session Cache
 
-Gustiel caches the extracted data so you can re-run steps without re-fetching from Jira. If data has changed, say "fresh" or "redo" to force a new extraction. Use Skill 08 to clear the cache manually.
+Gustiel caches the extracted data so you can re-run steps without re-fetching from Jira. If data has changed, say *"fresh"* or *"redo"* to force a new extraction. You can also clear your session cache by asking *"Clear my cache"*.
 
 ## 🔧 Technical Reference
 
-> **Resolvers:** `confluence-export-resolver.js`, `portfolio-analysis-resolver.js`, `portfolio-report-resolver.js`
+> **Resolvers:** `confluence-export-resolver.js`, `prepare-export-resolver.js`, `lead-time-resolver.js`, `sprint-data-resolver.js`
 
 ### ETL Pipeline (Four Steps)
 
@@ -70,11 +65,11 @@ Each step is a separate Forge invocation — required by Forge's 25-second execu
 
 **Step 3 — SPRINT** (`calculate-sprint-data` → `sprint-data-resolver.js`)
 - Reads team list from session
-- Calls `fetchSprintReportsForTeams()` from `sprint-extractor.js` — same function used by Skill 06
+- Calls `fetchSprintReportsForTeams()` from `sprint-extractor.js` — same function used by the Team Sprint skill
 - Updates session: adds `sprintsByTeam`
 
-**Step 4 — LOAD** (`export-to-confluence` or `analyze-portfolio-chat`)
-- Reads full session, formats output, delivers to Confluence or chat
+**Step 4 — LOAD** (`export-to-confluence` → `confluence-export-resolver.js`)
+- Reads full session, formats output, delivers to Confluence
 
 ### Session Key Format
 

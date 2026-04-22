@@ -6,7 +6,7 @@
 
 Exports a formatted Confluence page with the **Gustiel User Guide** — all skills, what they do, and how to trigger them. Ideal for onboarding teammates or creating a reference in Confluence.
 
-A companion export, **Export Architecture Guide** (Skill 07b), creates the developer-focused Technical Reference page.
+A companion export, **Export Architecture Guide**, creates the developer-focused Technical Reference page.
 
 ### How to Trigger It
 

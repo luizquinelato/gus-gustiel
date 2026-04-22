@@ -136,6 +136,9 @@ export const exportSkillDocs = async (event) => {
         }
 
         // ── Upload screenshots as attachments ─────────────────────────────────
+        // Attachments must exist on the page before Confluence can render <ac:image> tags.
+        // After uploading, we do a final page re-update so Confluence re-resolves all
+        // ri:attachment references with the now-present files (avoids "Preview unavailable").
         const screenshotFiles = Object.keys(SCREENSHOTS);
         const uploadResults   = [];
         for (const filename of screenshotFiles) {
@@ -145,6 +148,19 @@ export const exportSkillDocs = async (event) => {
             } catch (uploadErr) {
                 console.error(`[exportSkillDocs] Screenshot upload failed for "${filename}": ${uploadErr.message}`);
                 uploadResults.push({ filename, status: 'failed', error: uploadErr.message });
+            }
+        }
+
+        // Force re-render: re-PUT the same content now that attachments exist.
+        if (screenshotFiles.length > 0 && uploadResults.some(r => r.status === 'ok')) {
+            try {
+                const currentVersion = page.version?.number ?? (wasUpdated ? null : 1);
+                if (currentVersion != null) {
+                    page = await updateConfluencePage(page.id, currentVersion, space.id, pageTitle, storageBody);
+                }
+            } catch (reRenderErr) {
+                // Non-fatal — images may still show on next page load
+                console.warn(`[exportSkillDocs] Re-render update failed: ${reRenderErr.message}`);
             }
         }
 

@@ -6,7 +6,7 @@
 
 Admin skills give trusted users additional control over Gustiel — such as viewing all cached sessions, clearing all data, and managing who has admin access. These skills are restricted to users in the Gustiel admin registry.
 
-To become an admin: use Skill 10 (`get-my-account-id`) to find your account ID, then ask a current admin to add you.
+To become an admin: ask *"What is my account ID?"* to find your account ID, then ask a current admin to add you.
 
 ### Admin Actions
 

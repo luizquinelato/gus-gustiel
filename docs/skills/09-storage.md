@@ -6,15 +6,12 @@
 
 Shows your cached portfolio session data — which portfolio keys have been extracted, what phase they are in, and when they were last updated. Useful for checking the state of a session before deciding whether to re-run the pipeline.
 
-Admins see all sessions across all users.
-
 ### How to Trigger It
 
 | Intent | Example phrases |
 |---|---|
 | List own sessions | *"Inspect my storage"*, *"What's in my storage?"*, *"Show my sessions"* |
 | Read a specific key | *"Inspect storage key `export_session:…`"* |
-| Admin: list all | *"Inspect storage"* (admin) |
 
 ### What You'll See
 

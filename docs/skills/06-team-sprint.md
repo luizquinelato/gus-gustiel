@@ -53,20 +53,20 @@ All fields are populated from a single action call (Response Reuse Pattern — s
 4. **TRANSFORM** `computeSprintTrends(validSprints)` — pure; returns `null` when < 5 valid sprints
 5. **LOAD** `formatTeamSprintChat` — sprint table + trend sub-sections as Markdown
 
-### Relationship to Portfolio (Skills 04/05)
+### Relationship to Portfolio (Skill 04)
 
 The same `fetchSprintReportsForTeams` and `computeSprintTrends` functions power both this skill and the portfolio pipeline's Step 3. One implementation, shared.
 
-| | Skill 06 | Portfolio Step 3 |
+| | Team Sprint skill | Portfolio Step 3 |
 |---|---|---|
 | Scope | One team | All teams |
 | Board discovery | JQL-based (no session) | Reads from session (faster) |
-| Output | Chat message | Written to session for export |
+| Output | Markdown response | Written to session for export |
 | Requires session | ❌ Never | ✅ Yes |
 
 ### See Also
 
-- `docs/skills/04-05-portfolio.md` → how sprint data feeds the portfolio
+- `docs/skills/04-portfolio.md` → how sprint data feeds the portfolio
 - `docs/architecture.md` → Response Reuse Pattern, sprint-extractor.js details
 - `src/extractors/sprint-extractor.js` → `discoverBoardIdForTeam`, `fetchSprintReportsForTeams`
 - `src/utils/concurrency.js` → `makeSemaphore`

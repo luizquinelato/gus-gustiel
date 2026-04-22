@@ -44,8 +44,8 @@ function readBinary(relPath) {
 
 /**
  * Extract the H1 title from a skill doc (strips "Skill XX — " prefix).
- * e.g. "# Skills 04 & 05 — Portfolio Report" → "Portfolio Report (Confluence + Chat)"
- * e.g. "# Admin Skills"                       → "Admin Skills"
+ * e.g. "# Skill 04 — Portfolio Report" → "Portfolio Report"
+ * e.g. "# Admin Skills"               → "Admin Skills"
  */
 function getSkillTitle(md) {
     const m = md.match(/^# (?:Skills? \S[\S]* — )?(.+)/m);
@@ -75,7 +75,8 @@ const SKILL_FILES = [
     'docs/skills/01-identity.md',
     'docs/skills/02-version.md',
     'docs/skills/03-system-info.md',
-    'docs/skills/04-05-portfolio.md',
+    'docs/skills/04-portfolio.md',
+    'docs/skills/05-lct.md',
     'docs/skills/06-team-sprint.md',
     'docs/skills/07-export-skill-docs.md',
     'docs/skills/08-session-cache.md',
