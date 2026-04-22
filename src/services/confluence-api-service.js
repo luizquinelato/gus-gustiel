@@ -13,6 +13,7 @@
  *   createFolder(spaceId, title, parentId?)               → { id, type, ... }
  *   findFolderByTitle(spaceKey, title)                    → { id, title } | null
  *   findOrCreatePageByPath(spaceId, pathString)           → parentId string | null
+ *   uploadAttachment(pageId, filename, base64Data, mimeType?) → Confluence API response
  *
  * NOTE on folder support:
  *   The Confluence v2 API does NOT provide a way to search/list folders by title.
@@ -310,3 +311,44 @@ export async function findOrCreatePageByPath(spaceId, pathString) {
     return parentId;
 }
 
+/**
+ * Upload a file as an attachment to an existing Confluence page.
+ *
+ * If an attachment with the same filename already exists on the page,
+ * Confluence replaces it (idempotent when called after page upsert).
+ *
+ * @param {string} pageId     - Numeric Confluence page ID
+ * @param {string} filename   - Filename as it should appear in Confluence (e.g. "screenshot.png")
+ * @param {string} base64Data - Base64-encoded file content
+ * @param {string} [mimeType] - MIME type (default: "image/png")
+ * @returns {Promise<object>}  Confluence API response body
+ * @throws {Error} if the upload fails
+ */
+export async function uploadAttachment(pageId, filename, base64Data, mimeType = 'image/png') {
+    // Decode base64 → binary
+    const binaryStr = atob(base64Data);
+    const bytes     = new Uint8Array(binaryStr.length);
+    for (let idx = 0; idx < binaryStr.length; idx++) {
+        bytes[idx] = binaryStr.charCodeAt(idx);
+    }
+
+    const blob     = new Blob([bytes], { type: mimeType });
+    const formData = new FormData();
+    formData.append('file', blob, filename);
+
+    const response = await asApp().requestConfluence(
+        route`/wiki/api/v2/pages/${pageId}/attachments`,
+        {
+            method:  'POST',
+            headers: { 'X-Atlassian-Token': 'nocheck' },
+            body:    formData,
+        }
+    );
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`Attachment upload failed for "${filename}": HTTP ${response.status} — ${text}`);
+    }
+
+    return response.json();
+}

@@ -77,11 +77,16 @@ Exports a Lead Time / Cycle Time Confluence page for one or more agile teams. An
 - *"Export lead time for Titan and Vanguard to [space]"*
 → Follow the **Team Export delivery path** below. Use `export-team-lead-time`.
 
-#### 9. 📚 Export Skill Documentation *(documentation — exports this guide to Confluence)*
-Exports a formatted Confluence page with all skills, usage examples, access levels, and the ETL pipeline description. Ideal for onboarding teammates or creating a formal reference.
+#### 9. 📚 Export Skill Documentation *(documentation — exports User Guide to Confluence)*
+Exports the Gustiel **User Guide** to Confluence — all skills in business-friendly language, with a DEV vs PROD orientation preamble and screenshots.
 - *"Export skill documentation"*, *"Create a Gustiel user guide in Confluence"*
 - *"Document all Gustiel skills to Confluence"*, *"Export the help to Confluence"*
-→ Follow the **Skill Documentation delivery path** below.
+→ Follow the **Skill Documentation delivery path** below. Use `export-skill-docs`.
+
+#### 9b. 🏗️ Export Architecture Guide *(documentation — exports Technical Reference to Confluence)*
+Exports the **Technical Reference** to Confluence — developer-focused, with technical notes, internal pipeline diagrams, and the full architecture document.
+- *"Export architecture guide"*, *"Export Gustiel technical reference"*, *"Export the developer docs to Confluence"*
+→ Follow the **Skill Documentation delivery path** below. Use `export-architecture-guide`.
 
 #### 10. 🗑️ Clear My Session Cache *(self-service — your data only)*
 Deletes your own cached portfolio session data. Forces fresh extraction on your next export or analysis. Other users are unaffected.
@@ -561,9 +566,11 @@ trendData.predictability.label                 — "High" | "Medium" | "Low"
 
 ---
 
-## 🏃 Skill 6 — Export Skill Documentation
+## 🏃 Skill 6 — Export Skill Documentation / Architecture Guide
 
-**Trigger phrases:** *"export skill documentation"*, *"create a Gustiel user guide in Confluence"*, *"document all Gustiel skills to Confluence"*, *"export the help to Confluence"*, *"export Gustiel docs"*
+**Trigger phrases:**
+- User Guide: *"export skill documentation"*, *"create a Gustiel user guide in Confluence"*, *"export the help to Confluence"*, *"export Gustiel docs"*
+- Tech Reference: *"export architecture guide"*, *"export Gustiel technical reference"*, *"export the developer docs"*
 
 → Follow the **Skill Documentation delivery path** below.
 
@@ -573,34 +580,39 @@ trendData.predictability.label                 — "High" | "Medium" | "Low"
 
 This is a single-step export — no Jira keys, no ETL, no cache. Follow these steps:
 
-**Step SD-1 — Ask for Confluence space (once)**
+**Step SD-1 — Confirm which page to export (if not already clear)**
 
-> *"Which Confluence space should the skill guide go to? Just type the space name, e.g. `Gustiel`."*
+If the user said "skill docs" or "user guide" → use `export-skill-docs` (User Guide page).
+If the user said "architecture", "technical reference", or "developer docs" → use `export-architecture-guide`.
 
-**Step SD-2 — Ask for placement (once)**
+**Step SD-2 — Ask for Confluence space (once)**
 
-> *"Where in `SPACE_KEY` should the guide be placed?*
+> *"Which Confluence space should the page go to? Just type the space name, e.g. `Gustiel`."*
+
+**Step SD-3 — Ask for placement (once)**
+
+> *"Where in `SPACE_KEY` should the page be placed?*
 >
 > *1️⃣ **Under a page hierarchy** — type a path, e.g. `Docs/Gustiel`*
 > *2️⃣ **Inside an existing folder** — paste the folder URL or numeric ID*
 > *3️⃣ **Space root** — just say "root" or "no folder"*"
 
-**Step SD-3 — Call the action**
+**Step SD-4 — Call the action**
 
-Call action `export-skill-docs` with:
+Call `export-skill-docs` OR `export-architecture-guide` with:
 - `spaceKey` = the space key (uppercase)
 - `parentPath` = path if option 1 was chosen
 - `folderId` = numeric folder ID if option 2 was chosen
 - *(no placement param)* if option 3 was chosen
 
 **On `status === "SUCCESS"`:**
-> *"✅ Gustiel Skill Reference [action] to Confluence.*
-> *📄 [pageTitle] → [pageUrl]"*
+> Display `message` verbatim, then show the URL:
+> *"📄 [pageTitle] → [pageUrl]"*
 
-Where `[action]` is `"moved and updated"`, `"updated"`, or `"exported"`.
+Do NOT generate any additional summary or description of the page content.
 
 **On `status === "ERROR"`:**
-> *"❌ Could not export the skill guide: [message]"*
+> *"❌ Could not export the page: [message]"*
 
 ---
 

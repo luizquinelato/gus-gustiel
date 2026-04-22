@@ -348,6 +348,16 @@ export function markdownToStorage(markdown) {
         // Empty line — skip (Confluence renders vertical space automatically)
         if (trimmed === '') { i++; continue; }
 
+        // Inline image with ATTACH: prefix → Confluence attachment image macro
+        // Syntax: ![alt](ATTACH:filename.png)
+        // Renders as a Confluence attachment inline image (no external URL needed).
+        const attachMatch = trimmed.match(/^!\[([^\]]*)\]\(ATTACH:([^)]+)\)$/);
+        if (attachMatch) {
+            const filename = attachMatch[2].trim();
+            html.push(`<ac:image><ri:attachment ri:filename="${filename}"/></ac:image>`);
+            i++; continue;
+        }
+
         // Paragraph
         html.push(`<p>${inlineToHtml(line)}</p>`);
         i++;

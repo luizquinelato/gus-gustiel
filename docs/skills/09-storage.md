@@ -1,69 +1,53 @@
 # Skill 09 — Storage Inspection
 
-> **Access:** Everyone (own sessions); Admins (all sessions) · **Action:** `inspect-storage` · **Resolver:** `storage-admin-resolver.js`
+## 📋 User Guide
 
----
+### What It Does
 
-## What It Does
+Shows your cached portfolio session data — which portfolio keys have been extracted, what phase they are in, and when they were last updated. Useful for checking the state of a session before deciding whether to re-run the pipeline.
 
-Lists or reads Forge Storage session data. Non-admins see only their own sessions. Admins see all sessions across all users.
+Admins see all sessions across all users.
 
-Useful for debugging portfolio pipeline state, verifying which phase a session is in, and confirming sprint/LCT data was written correctly.
-
----
-
-## Trigger Phrases
+### How to Trigger It
 
 | Intent | Example phrases |
 |---|---|
 | List own sessions | *"Inspect my storage"*, *"What's in my storage?"*, *"Show my sessions"* |
-| Read a specific key | *"Inspect storage key `export_session:…`"*, *"Inspect key `export_session:…`"* |
+| Read a specific key | *"Inspect storage key `export_session:…`"* |
 | Admin: list all | *"Inspect storage"* (admin) |
-| Admin: read any key | *"Show storage key `<any-key>`"* |
 
----
+### What You'll See
 
-## Session Format
-
-Portfolio sessions are stored as:
-```
-export_session:<accountId>:<portfolioKey>
-```
-
-A session summary shows:
+For each session:
 - Portfolio key
-- Phase (`layers_1_4` = extraction done, LCT pending; `complete` = all steps done)
-- Team count
-- Whether sprint data is present
-- Whether LCT (Lead/Cycle Time) data is present
-- `cachedAt` timestamp (in `REPORT_TIMEZONE`)
+- Phase: `layers_1_4` (extraction done, Lead / Cycle Time pending) or `complete` (all steps done)
+- Team count, sprint data present, Lead / Cycle Time data present
+- When the session was last updated
 
-> Sessions are never dumped as raw JSON. Always displayed as a human-readable summary.
+Sessions are always shown as a human-readable summary — never raw JSON.
 
----
+### Phase Guide
 
-## Phase Guide
-
-| `phase` | What it means | What to do next |
+| Phase | Meaning | Next step |
 |---|---|---|
-| `layers_1_4` | Extraction done; LCT not yet run | Run `calculate-lead-time-data` (Step 2) |
-| `complete` | All steps done; ready for export | Export or analyze — or refresh if data is stale |
-| *(missing)* | No session found for this key | Run `prepare-portfolio-export` (Step 1) |
+| `layers_1_4` | Extraction done; Lead/Cycle Time not yet run | Run `calculate-lead-time-data` (Step 2) |
+| `complete` | All steps done; ready for export | Export, analyze, or refresh if data is stale |
+| *(missing)* | No session found | Run `prepare-portfolio-export` (Step 1) |
 
----
+## 🔧 Technical Reference
 
-## Admin Capabilities
+> **Action:** `inspect-storage` · **Resolver:** `storage-admin-resolver.js`
 
-Admins calling `inspect-storage` with no key see **all storage keys** across the entire app — including other users' sessions and the admin registry. They can read any key.
+### How It Works
 
-Non-admins are restricted by prefix: only keys starting with `export_session:<their-accountId>:` are accessible.
+Non-admins: filtered to keys starting with `export_session:<accountId>:`.
+Admins: access to all keys including other users' sessions and the admin registry.
 
----
+The `phase` field drives the ETL state machine — see `docs/architecture.md` → Storage Architecture section.
 
-## See Also
+### See Also
 
 - `docs/skills/08-session-cache.md` → clearing sessions
-- `docs/skills/10-account-id.md` → finding your accountId (needed to read specific keys)
+- `docs/skills/10-account-id.md` → finding your accountId
 - `docs/skills/admin.md` → admin-level storage operations
-- `docs/skills/04-05-portfolio.md` → how sessions are built
 - `src/resolvers/storage-admin-resolver.js`

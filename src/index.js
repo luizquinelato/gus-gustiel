@@ -19,4 +19,5 @@ export { getTeamLeadTime }                    from './resolvers/team-lead-time-r
 export { exportTeamSprint }                   from './resolvers/team-sprint-export-resolver.js';
 export { exportTeamLeadTime }                 from './resolvers/team-lead-time-export-resolver.js';
 export { exportSkillDocs }                    from './resolvers/skill-docs-resolver.js';
+export { exportArchitectureGuide }            from './resolvers/architecture-guide-resolver.js';
 

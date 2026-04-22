@@ -33,6 +33,7 @@ modules:
         - export-team-sprint
         - export-team-lead-time
         - export-skill-docs
+        - export-architecture-guide
 
   function:
     - key: getAgentVersion
@@ -79,6 +80,8 @@ modules:
       handler: index.exportTeamLeadTime
     - key: exportSkillDocs
       handler: index.exportSkillDocs
+    - key: exportArchitectureGuide
+      handler: index.exportArchitectureGuide
 
   action:
     - key: get-agent-version
@@ -285,7 +288,7 @@ modules:
       function: getTeamLeadTime
       name: Get Team Lead Time & Cycle Time
       actionVerb: GET
-      description: "On-demand Lead Time / Cycle Time report for one or more agile teams. Fetches all completed Story/Task/Bug items from the last 6 months, computes average lead time and cycle time broken down by issue type. Accepts a comma-separated list of team names (e.g. 'Titan, Bushido'). Renders a markdown table in chat."
+      description: "On-demand Lead Time / Cycle Time report for one or more agile teams (comma-separated). Analyzes completed items from the last 6 months; computes average lead time and cycle time by issue type. No portfolio key needed."
       inputs:
         teamNames:
           title: Team Names
@@ -297,7 +300,7 @@ modules:
       function: exportTeamSprint
       name: Export Team Sprint Analysis to Confluence
       actionVerb: GET
-      description: "Exports a Sprint Analysis Confluence page for one or more agile teams. Discovers each team's board, fetches the last 6 closed sprints via GreenHopper, computes velocity / say-do / rolled-over SP and trend analytics, then creates or updates a page in the target Confluence space."
+      description: "Exports a Sprint Analysis Confluence page for one or more agile teams. Fetches the last 6 closed sprints, computes velocity, say/do ratio, rolled-over SP and trend analytics. Creates or updates the page in the target space."
       inputs:
         teamNames:
           title: Team Names
@@ -334,7 +337,7 @@ modules:
       function: exportTeamLeadTime
       name: Export Team Lead Time & Cycle Time to Confluence
       actionVerb: GET
-      description: "Exports a Lead Time / Cycle Time Confluence page for one or more agile teams. Fetches all completed items from the last 6 months and computes average lead time and cycle time broken down by issue type, then creates or updates a page in the target Confluence space."
+      description: "Exports a Lead Time / Cycle Time Confluence page for one or more agile teams. Analyzes completed items from the last 6 months, computes average lead time and cycle time by issue type. Creates or updates the page in the target space."
       inputs:
         teamNames:
           title: Team Names
@@ -488,12 +491,12 @@ modules:
 
     - key: export-skill-docs
       function: exportSkillDocs
-      name: Export Skill Documentation
+      name: Export User Guide
       actionVerb: CREATE
       description: >-
-        Exports a comprehensive Confluence page documenting all Gustiel skills,
-        usage examples, access levels, and the ETL pipeline. No Jira data is
-        fetched — content is static documentation with dynamic version/env metadata.
+        Exports the Gustiel User Guide to Confluence — all skills in business-friendly
+        language with a DEV vs PROD orientation section and bundled screenshots.
+        No Jira data is fetched.
       inputs:
         spaceKey:
           title: Confluence Space Key
@@ -516,7 +519,35 @@ modules:
             Takes precedence over parentPath when provided.
           required: false
 
-
+    - key: export-architecture-guide
+      function: exportArchitectureGuide
+      name: Export Architecture Guide
+      actionVerb: CREATE
+      description: >-
+        Exports the Gustiel Technical Reference to Confluence — a developer-focused
+        page containing the Technical Reference section from each skill doc plus the
+        full architecture document. No Jira data is fetched.
+      inputs:
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: The Confluence space key where the page will be created (e.g. GUSTIEL).
+          required: true
+        parentPath:
+          title: Parent Page Path
+          type: string
+          description: >
+            Optional. Slash-separated page hierarchy under which the page will be nested
+            (e.g. "Docs/Gustiel"). Pages are created if missing.
+          required: false
+        folderId:
+          title: Folder ID
+          type: string
+          description: >
+            Optional. Numeric ID of an existing Confluence native folder.
+            Extract from the folder URL after /folder/ (e.g. "52592641").
+            Takes precedence over parentPath when provided.
+          required: false
 
 
 resources:
@@ -547,3 +578,4 @@ permissions:
     - read:space:confluence
     - read:folder:confluence
     - write:folder:confluence
+    - write:attachment:confluence

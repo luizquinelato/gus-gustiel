@@ -1,53 +1,49 @@
 # Skill 07 — Export Skill Documentation
 
-> **Access:** Everyone · **Action:** `export-skill-docs` · **Resolver:** `skill-docs-resolver.js`
+## 📋 User Guide
 
----
+### What It Does
 
-## What It Does
+Exports a formatted Confluence page with the **Gustiel User Guide** — all skills, what they do, and how to trigger them. Ideal for onboarding teammates or creating a reference in Confluence.
 
-Exports a comprehensive, formatted Confluence page documenting all Gustiel skills, trigger phrases, access levels, the ETL pipeline, supported Jira hierarchy levels, and the session cache model. Ideal for onboarding teammates or creating a formal reference.
+A companion export, **Export Architecture Guide** (Skill 07b), creates the developer-focused Technical Reference page.
 
----
-
-## Trigger Phrases
+### How to Trigger It
 
 - *"Export skill documentation"*, *"Create a Gustiel user guide in Confluence"*
-- *"Document all Gustiel skills to Confluence"*, *"Export the help to Confluence"*
-- *"Export Gustiel docs"*
+- *"Export Gustiel docs"*, *"Export the help to Confluence"*
 
----
+### Interaction Steps
 
-## Delivery Path
+1. Gustiel asks which Confluence space to export to
+2. Gustiel asks where to place the page (under a page path, inside a folder, or at space root)
+3. The export runs and returns a link to the page
 
-Three-step interaction:
+### What Gets Exported
 
-1. **Ask for Confluence space** — *"Which Confluence space should the skill guide go to?"*
-2. **Ask for placement** — under a page hierarchy path, inside an existing folder (URL/ID), or at space root
-3. **Call `export-skill-docs`** with `spaceKey` + one placement param (`parentPath`, `folderId`, or none)
+The User Guide page contains:
+- A DEV vs PROD orientation section (so users know which agent they're on)
+- A User Guide section for every Gustiel skill
+- Trigger phrases and usage descriptions in plain language
 
----
+## 🔧 Technical Reference
 
-## Response
+> **Action:** `export-skill-docs` · **Resolver:** `skill-docs-resolver.js`
 
-On `SUCCESS`:
-> *"✅ Gustiel Skill Reference [action] to Confluence.*
-> *📄 [pageTitle] → [pageUrl]"*
+### How It Works
 
-Where `[action]` is `"moved and updated"`, `"updated"`, or `"exported"` depending on whether the page already existed.
+Content comes from the bundled `USER_GUIDE_MD` export in `src/docs/index.js`, generated at deploy time by `scripts/bundle-docs.mjs`. Each skill doc's `## 📋 User Guide` section is extracted and concatenated. The DEV/PROD preamble and environment metadata are prepended at runtime.
 
----
+After the page is upserted, the resolver uploads any bundled screenshots as Confluence attachments (`uploadAttachment` in `confluence-api-service.js`).
 
-## Technical Notes
+### Key Patterns
 
-- Uses `buildCustomTable(headers, rows, colspans)` from `src/formatters/confluence-formatter.js` for the ETL pipeline and hierarchy tables — required because those tables have unequal column widths not expressible in standard Markdown pipe tables.
-- Same upsert/folder/path logic as `confluence-export-resolver.js` (find by title → update → move → create).
-- No Jira ETL pipeline involved — this skill is documentation-only. No session, no cache.
+- **Bundled screenshots**: `ATTACH:filename.png` in markdown → Confluence `<ac:image>` attachment tag
+- **Upsert logic**: find by title → update in place → move + update → create (same as portfolio export)
+- **No Jira ETL**: documentation-only. No session, no cache.
 
----
+### See Also
 
-## See Also
-
-- `docs/architecture.md` → ETL layer map (what this skill documents)
+- `scripts/bundle-docs.mjs` → how docs are bundled and screenshots are base64-encoded
 - `src/resolvers/skill-docs-resolver.js`
-- `src/formatters/confluence-formatter.js` → `buildCustomTable`
+- `src/services/confluence-api-service.js` → `uploadAttachment`

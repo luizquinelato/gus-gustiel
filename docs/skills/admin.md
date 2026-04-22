@@ -1,93 +1,60 @@
 # Admin Skills
 
-> **Access:** Admin-only (except where noted) · **Resolver:** `storage-admin-resolver.js`
+## 📋 User Guide
 
-Admin skills are restricted to users in the Gustiel admin registry, or to the designated super-admin. Non-admins receive an access-denied error.
+### What Are Admin Skills?
 
-Use **Skill 10** (`get-my-account-id`) to find your `accountId`, then ask a current admin to grant you access.
+Admin skills give trusted users additional control over Gustiel — such as viewing all cached sessions, clearing all data, and managing who has admin access. These skills are restricted to users in the Gustiel admin registry.
 
----
+To become an admin: use Skill 10 (`get-my-account-id`) to find your account ID, then ask a current admin to add you.
 
-## Admin Registry
+### Admin Actions
 
-Gustiel maintains a **dynamic admin registry** in Forge Storage alongside a **static super-admin** ID hardcoded in `src/config/constants.js`. The super-admin cannot be removed; dynamic admins can be added and removed at runtime.
+**🔍 Inspect All Storage** — see every session across all users
+- *"Inspect storage"* → lists all keys · *"Show storage key `<any-key>`"* → reads any key
 
----
+**🗑️ Wipe All Storage** — deletes ALL cached sessions for ALL users (irreversible)
+- *"Wipe all storage"*, *"Clear all sessions"*, *"Nuke storage"*
 
-## Admin Actions
-
-### 🔍 Inspect All Storage *(extends Skill 09)*
-
-Admins calling `inspect-storage` with no key see **all** storage keys across all users.
-
-- *"Inspect storage"* → lists every key in the app
-- *"Show storage key `<any-key>`"* → reads any key, including other users' sessions
-
-→ Action: `inspect-storage` (no key param) · See also: `docs/skills/09-storage.md`
-
----
-
-### 🗑️ Wipe All Storage
-
-Deletes ALL cached session data for ALL users. Irreversible. Use with caution.
-
-- *"Wipe all storage"*, *"Clear all sessions"*, *"Reset all user caches"*, *"Nuke storage"*
-
-→ Action: `wipe-global-storage` with `confirm = "YES"`
-
----
-
-### 👥 List Admins
-
-Lists the super-admin and all dynamic admins (display name + email).
-
+**👥 List Admins** — shows who currently has admin access
 - *"List admins"*, *"Who are the admins?"*, *"Show admin registry"*
 
-→ Action: `list-admins` with `confirm = "YES"` · **READ-ONLY — never triggers destructive actions.**
-
----
-
-### ➕ Add Admin *(Super-admin only)*
-
-Grants admin access to a user by their Atlassian `accountId`. The user must provide their ID first via Skill 10.
-
+**➕ Add Admin** *(super-admin only)* — grant access by `accountId`
 - *"Add admin"*, *"Grant admin access to [accountId]"*, *"Make [X] an admin"*
 
-→ Action: `add-admin` with `adminAccountId = "<the accountId>"`
+**➖ Remove Admin** — remove a dynamic admin (cannot remove the super-admin)
+- *"Remove admin"*, *"Revoke admin access from [accountId]"*
 
----
-
-### ➖ Remove Admin
-
-Removes a dynamic admin from the registry. Cannot remove the super-admin.
-
-- *"Remove admin"*, *"Revoke admin access from [accountId]"*, *"Remove [X] as admin"*
-
-→ Action: `remove-admin` with `adminAccountId = "<the accountId>"`
-
----
-
-### 🗑️ Clear Admin Registry
-
-Resets the entire dynamic admin registry to empty. Super-admin is unaffected. Only trigger for explicit clear/reset requests — never for read-only intents like "list" or "show".
-
+**🗑️ Clear Admin Registry** — reset the dynamic admin list to empty
 - *"Clear the admin registry"*, *"Reset the admin registry"*
 
-→ Action: `clear-admin-registry` with `confirm = "YES"`
+## 🔧 Technical Reference
 
----
+> **Resolver:** `storage-admin-resolver.js`
 
-## Technical Notes
+### Two-Tier Access Model
 
-- The admin check runs at the top of every restricted action in `storage-admin-resolver.js`.
-- Security boundary for non-admins: `startsWith('export_session:<accountId>:')` prefix check.
-- Dynamic admin list is stored in Forge Storage as a dedicated registry key (separate from portfolio sessions).
+Gustiel uses a static super-admin (`SUPER_ADMIN_ACCOUNT_ID` in `src/config/constants.js`) and a dynamic admin registry stored as a dedicated Forge Storage key. The super-admin cannot be removed. Dynamic admins can be added and removed at runtime.
 
----
+### Security Boundary
 
-## See Also
+Admin check runs at the top of every restricted action. Non-admins are restricted by prefix:
+`startsWith('export_session:<accountId>:')` — they can only see their own sessions.
 
-- `docs/skills/09-storage.md` → storage inspection (all users + admin extension)
-- `docs/skills/10-account-id.md` → how to find your accountId before requesting access
+### Action Map
+
+| Intent | Action | Required params |
+|---|---|---|
+| Inspect all | `inspect-storage` | no key |
+| Wipe all sessions | `wipe-global-storage` | `confirm = "YES"` |
+| List admins | `list-admins` | `confirm = "YES"` |
+| Add admin | `add-admin` | `adminAccountId` |
+| Remove admin | `remove-admin` | `adminAccountId` |
+| Clear registry | `clear-admin-registry` | `confirm = "YES"` |
+
+### See Also
+
+- `docs/skills/09-storage.md` → storage inspection
+- `docs/skills/10-account-id.md` → finding accountId
 - `src/resolvers/storage-admin-resolver.js`
-- `src/config/constants.js` → super-admin ID
+- `src/config/constants.js` → `SUPER_ADMIN_ACCOUNT_ID`

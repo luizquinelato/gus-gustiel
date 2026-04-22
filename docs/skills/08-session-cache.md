@@ -1,56 +1,39 @@
 # Skill 08 — Clear My Session Cache
 
-> **Access:** Everyone (own data only) · **Action:** `wipe-user-storage` · **Resolver:** `storage-admin-resolver.js`
+## 📋 User Guide
 
----
+### What It Does
 
-## What It Does
+Clears your own cached portfolio session data. This forces a fresh extraction the next time you run a portfolio report or analysis. Other users are not affected.
 
-Deletes **your own** cached portfolio session data from Forge Storage. Forces fresh extraction on your next portfolio export or chat analysis. Other users are completely unaffected.
-
----
-
-## Trigger Phrases
+### How to Trigger It
 
 - *"Clear my cache"*, *"Wipe my sessions"*, *"Reset my storage"*, *"Clear my data"*
 
----
+### When to Use It
 
-## When to Use
-
-| Situation | Action |
+| Situation | What to do |
 |---|---|
-| Jira data has changed significantly since the last extraction | Clear cache → re-run the portfolio pipeline |
-| Session shows `layers_1_4` phase but you want a full fresh start | Clear cache |
-| Portfolio export showed stale or incorrect team/sprint data | Clear cache → re-run all three ETL steps |
+| Jira data changed since the last extraction | Clear cache, then re-run the portfolio pipeline |
+| Portfolio export showed stale or incorrect data | Clear cache, then re-run all three ETL steps |
 | You ran a test extraction and want to discard it | Clear cache |
 
-> 💡 Stale cache is the most common cause of "Sprint data not available" errors in portfolio exports. When in doubt, clear and re-run.
+> 💡 Stale cache is the most common cause of "Sprint data not available" in portfolio exports. When in doubt, clear and re-run.
 
----
+## 🔧 Technical Reference
 
-## How Sessions Are Stored
+> **Action:** `wipe-user-storage` · **Resolver:** `storage-admin-resolver.js`
 
-Each ETL pipeline run writes one Forge Storage entry per portfolio key:
+### How It Works
 
-```
-export_session:<accountId>:<portfolioKey>
-```
+Deletes all Forge Storage keys matching `export_session:<your-accountId>:*`. Requires `confirm = "YES"` (the LLM passes this automatically).
 
-`wipe-user-storage` deletes **all keys** matching `export_session:<your-accountId>:*`. If you want to clear only a specific key, use Skill 09 (Storage Inspection) to identify it first — or ask an admin.
+The security boundary is enforced via `startsWith` prefix filtering — non-admins cannot reach other users' keys.
 
----
+To wipe all storage for all users, admins use the separate `wipe-global-storage` action.
 
-## Technical Notes
-
-- Requires `confirm = "YES"` (the LLM passes this automatically — no user action needed).
-- Uses `startsWith` prefix filtering on `export_session:<accountId>:` as the security boundary — non-admins cannot reach other users' keys.
-- Admins wiping ALL storage use a different action: `wipe-global-storage` (Admin skill).
-
----
-
-## See Also
+### See Also
 
 - `docs/skills/09-storage.md` → inspect session state before clearing
-- `docs/skills/04-05-portfolio.md` → how sessions are built and when they expire
+- `docs/skills/04-05-portfolio.md` → how sessions are built
 - `src/resolvers/storage-admin-resolver.js`

@@ -1,53 +1,44 @@
 # Skill 01 — Identity & Creator Card
 
-> **Access:** Everyone · **Action:** `get-agent-info` · **Resolver:** `creator-resolver.js`
+## 📋 User Guide
 
----
+### What It Does
 
-## What It Does
+Gustiel introduces itself when you ask. Say "Who are you?" to see Gustiel's full identity card — name, role, a summary of its capabilities, and a photo. Say "Who created you?" or "Who built you?" to see the creator's profile.
 
-Returns Gustiel's static identity card: name, title, description, top-level skill list, avatar image, and creator information. Both "who are you?" and "who built you?" trigger the same card.
+Both questions trigger the same response.
 
----
-
-## Trigger Phrases
+### How to Trigger It
 
 | Intent | Example phrases |
 |---|---|
 | Identity | *"Who are you?"*, *"What are you?"*, *"Tell me about yourself"*, *"Introduce yourself"* |
 | Creator | *"Who created you?"*, *"Who built you?"*, *"Show creator info"* |
 
----
+### What You'll See
 
-## Response
+An identity card with Gustiel's avatar, its role description, a list of what it can do, and the creator's name, email, and photo — all in a single response.
 
-The LLM renders the card using a fixed template from `prompts/main_prompt.md`:
+## 🔧 Technical Reference
 
-```
-![Gustiel]({agent.avatarImageUrl})
-## 🤖 {agent.name} — {agent.title}
-_{agent.description}_
+> **Action:** `get-agent-info` · **Resolver:** `creator-resolver.js`
 
-**What I can do:**
-- {agent.skills[0..3]}
+### How It Works
 
-**Built by:** {agent.builtBy} · {agent.builtByEmail} · ![creator]({agent.builtByImageUrl})
-```
+No ETL pipeline. This resolver returns static data from the `GUSTIEL_CARD` constant in `src/resolvers/creator-resolver.js`.
 
-Both image URLs (`avatarImageUrl`, `builtByImageUrl`) are rendered inline because they are embedded in the prompt template — not returned from action data. See the **Image Rendering** section in `docs/architecture.md` for why this distinction matters.
+The card includes two image URL fields:
+- `avatarImageUrl` — Gustiel's avatar, rendered at the top of the identity card
+- `builtByImageUrl` — creator's photo, rendered on the Built by line
 
----
+Both images are rendered via the prompt template (`prompts/main_prompt.md`) using `![alt](url)` syntax — not returned from action data. Rovo's CSP blocks images returned in action payloads but renders images the LLM outputs as conversational text. See the **Image Rendering in Rovo Chat** section in `docs/architecture.md`.
 
-## Technical Notes
+### Technical Notes
 
-- **No ETL pipeline.** This resolver is purely static data.
-- All card content lives in `GUSTIEL_CARD` inside `src/resolvers/creator-resolver.js`.
-- Image URLs must be updated there — never hardcoded in the prompt template.
-- The agent avatar shown in the Rovo UI bubble is set separately via `manifest.yml` (`icon: resource:agent-assets;icons/avatar.png`).
+- Image URLs must be updated in `GUSTIEL_CARD` only — never hardcoded in the prompt template.
+- The agent avatar in the Rovo UI bubble is configured separately via `manifest.yml` (`icon: resource:agent-assets;icons/avatar.png`).
 
----
+### See Also
 
-## See Also
-
-- `docs/architecture.md` → **Image Rendering in Rovo Chat** section
+- `docs/architecture.md` → Image Rendering in Rovo Chat section
 - `src/resolvers/creator-resolver.js` → `GUSTIEL_CARD` constant

@@ -1,100 +1,69 @@
 /**
  * Skill Docs Resolver — export-skill-docs action
  *
- * Exports a comprehensive, formatted Confluence page documenting all
- * Gustiel skills, usage examples, access levels, and the ETL pipeline.
- * Content is static documentation with dynamic version/environment metadata.
- * Follows the same upsert/folder/path logic as exportToConfluence.
+ * Exports the Gustiel USER GUIDE to Confluence — a business-friendly page
+ * containing the User Guide section from each skill doc, preceded by a
+ * DEV vs PROD orientation preamble and the bundled screenshots.
+ *
+ * For the Technical Reference export, see architecture-guide-resolver.js.
  */
 
 import { getEnvFromJira, getUserEmail, getCurrentAccountId } from '../services/jira-api-service.js';
 import { getSpaceByKey, findPageByTitle, createConfluencePage,
-         updateConfluencePage, findOrCreatePageByPath }      from '../services/confluence-api-service.js';
-import { REPORT_TIMEZONE, VERSION }                          from '../config/constants.js';
+         updateConfluencePage, findOrCreatePageByPath,
+         uploadAttachment }                                   from '../services/confluence-api-service.js';
+import { REPORT_TIMEZONE, VERSION }                           from '../config/constants.js';
 import { markdownToStorage, buildTocMacro, buildAnchorMacro } from '../formatters/confluence-formatter.js';
-import {
-    SKILL_01_MD, SKILL_02_MD, SKILL_03_MD, SKILL_04_05_MD,
-    SKILL_06_MD, SKILL_07_MD, SKILL_08_MD, SKILL_09_MD,
-    SKILL_10_MD, SKILL_ADMIN_MD, ARCHITECTURE_MD,
-} from '../docs/index.js';
+import { USER_GUIDE_MD, SCREENSHOTS }                         from '../docs/index.js';
 
-// ── Documentation helpers ─────────────────────────────────────────────────────
+// ── DEV vs PROD preamble ──────────────────────────────────────────────────────
 
 /**
- * Extract the display title from a doc's H1 heading.
- * Strips the "Skill XX — " prefix so each skill becomes a clean H2 in output.
- * e.g. "# Skill 06 — Team Sprint Analysis" → "Team Sprint Analysis"
- *      "# Admin Skills"                    → "Admin Skills"
+ * Build the orientation preamble for the User Guide page.
+ * Tells users which agent they are on (DEV vs PROD) and how to switch.
  */
-function getSkillTitle(md) {
-    const m = md.match(/^# (?:Skill \S+ — )?(.+)/m);
-    return m ? m[1].trim() : '';
-}
-
-/**
- * Strip the H1 line and demote remaining headings by one level (H2→H3, H3→H4).
- * Processes in reverse order to avoid double-demotion.
- * (?!#) lookahead ensures exact hash count is matched, not a longer heading.
- */
-function demoteHeadings(md) {
-    return md
-        .replace(/^# .+(\r?\n|$)/m, '')    // strip first H1 line
-        .replace(/^#{3}(?!#)/gm, '####')   // H3 → H4  (before H2→H3)
-        .replace(/^#{2}(?!#)/gm, '###')    // H2 → H3
-        .trimStart();
-}
-
-// ── Documentation markdown ────────────────────────────────────────────────────
-
-/**
- * Compose the full Confluence page markdown from the bundled docs.
- *
- * Page structure:
- *   # 📖 Skills & Business Reference
- *     ## <skill title>          ← one H2 per skill (H1 stripped, title extracted)
- *       ### What It Does        ← original H2 demoted to H3
- *       ### Trigger Phrases
- *   ---
- *   # 🏗️ Technical Architecture
- *     ## What Is Gustiel?       ← architecture H2s kept at H2
- *     ## Architecture Overview
- *     ...
- */
-function buildSkillDocsMarkdown(envName) {
-    const skillFiles = [
-        SKILL_01_MD, SKILL_02_MD, SKILL_03_MD, SKILL_04_05_MD,
-        SKILL_06_MD, SKILL_07_MD, SKILL_08_MD, SKILL_09_MD,
-        SKILL_10_MD, SKILL_ADMIN_MD,
-    ];
-
-    const skillsBody = skillFiles.map(doc => {
-        const title = getSkillTitle(doc);
-        const body  = demoteHeadings(doc);
-        return `## ${title}\n\n${body}`;
-    }).join('\n\n---\n\n');
-
-    // Architecture: strip the H1 only — H2s stay as H2s
-    const archBody = ARCHITECTURE_MD
-        .replace(/^# .+(\r?\n|$)/m, '')
-        .trimStart();
+function buildPreamble(envName) {
+    const isDev     = envName?.toLowerCase().includes('sandbox') || envName?.toLowerCase().includes('dev');
+    const envBadge  = isDev ? '⚠️ **This page was exported from the DEV (Sandbox) instance.**' : '✅ **This page was exported from the PRODUCTION instance.**';
+    const agentNote = isDev
+        ? 'When using Rovo Chat, make sure you are talking to **[DEV] Gustiel** for test features, or **Gustiel (Portfolio Sentinel)** for stable production features.'
+        : 'When using Rovo Chat, use **Gustiel (Portfolio Sentinel)** for daily work. The **[DEV] Gustiel** agent runs experimental features on the Sandbox instance.';
 
     return [
-        `# 📖 Skills & Business Reference`,
+        `## 🧭 Which Gustiel Am I On?`,
+        ``,
+        `> ${envBadge}`,
+        `> ${agentNote}`,
+        ``,
+        `There are two Gustiel agents available in Rovo:`,
+        ``,
+        `| Agent | Instance | When to use |`,
+        `|---|---|---|`,
+        `| **Gustiel (Portfolio Sentinel)** | Production | Daily work — stable, recommended |`,
+        `| **[DEV] Gustiel** | Sandbox | Testing new features |`,
+        ``,
+        `![How to browse agents in Rovo](ATTACH:doc_dev_prod_browse_agents.png)`,
+        ``,
+    ].join('\n');
+}
+
+// ── Page markdown ─────────────────────────────────────────────────────────────
+
+function buildUserGuideMarkdown(envName) {
+    const preamble = buildPreamble(envName);
+    return [
+        `# 📖 Gustiel — User Guide`,
         ``,
         `> **Version:** ${VERSION} · **Environment:** ${envName} · **Built by:** Gustavo Quinelato`,
         ``,
-        skillsBody,
-        ``,
+        preamble,
         `---`,
         ``,
-        `# 🏗️ Technical Architecture`,
-        ``,
-        archBody,
+        USER_GUIDE_MD,
         ``,
         `[⬆ Back to top](#top)`,
     ].join('\n');
 }
-
 
 // ── Resolver ──────────────────────────────────────────────────────────────────
 
@@ -116,17 +85,17 @@ export const exportSkillDocs = async (event) => {
     const today     = new Intl.DateTimeFormat('en-CA', { timeZone: REPORT_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
     const userEmail = await getUserEmail(accountId);
     const byClause  = userEmail ? ` by [${userEmail}]` : '';
-    const pageTitle = `📘 [${today}] Gustiel Skill Reference${byClause}`;
+    const pageTitle = `📖 [${today}] Gustiel User Guide${byClause}`;
 
-    const rawMarkdown = buildSkillDocsMarkdown(env.name);
+    const rawMarkdown = buildUserGuideMarkdown(env.name);
     const fullContent = markdownToStorage(rawMarkdown);
 
     try {
         const space = await getSpaceByKey(spaceKey);
 
-        const anchor = buildAnchorMacro('top');
-        const toc    = buildTocMacro(1, 3);
-        const now    = new Date();
+        const anchor    = buildAnchorMacro('top');
+        const toc       = buildTocMacro(1, 3);
+        const now       = new Date();
         const createdAt = new Intl.DateTimeFormat('en-CA', {
             timeZone: REPORT_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit',
             hour: '2-digit', minute: '2-digit', hour12: false,
@@ -166,18 +135,32 @@ export const exportSkillDocs = async (event) => {
             }
         }
 
+        // ── Upload screenshots as attachments ─────────────────────────────────
+        const screenshotFiles = Object.keys(SCREENSHOTS);
+        const uploadResults   = [];
+        for (const filename of screenshotFiles) {
+            try {
+                await uploadAttachment(page.id, filename, SCREENSHOTS[filename]);
+                uploadResults.push({ filename, status: 'ok' });
+            } catch (uploadErr) {
+                console.error(`[exportSkillDocs] Screenshot upload failed for "${filename}": ${uploadErr.message}`);
+                uploadResults.push({ filename, status: 'failed', error: uploadErr.message });
+            }
+        }
+
         const pageUrl = `${env.baseUrl}/wiki${page._links?.webui || `/spaces/${spaceKey}/pages/${page.id}`}`;
         const action  = wasMoved ? 'moved and updated' : wasUpdated ? 'updated' : 'exported';
 
         return {
-            status:    'SUCCESS',
+            status:        'SUCCESS',
             pageTitle,
             pageUrl,
             spaceKey,
             action,
             wasUpdated,
             wasMoved,
-            message:   `✅ Gustiel Skill Reference ${action} → ${pageUrl}`,
+            screenshots:   uploadResults,
+            message:       `✅ Gustiel User Guide ${action} → ${pageUrl}`,
         };
     } catch (err) {
         return { status: 'ERROR', message: err.message };
