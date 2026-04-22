@@ -445,8 +445,8 @@ This section documents what `confluence-export-resolver.js` does end-to-end, fro
 Every exported page is assembled in this exact order before the API write:
 
 ```
-1. Anchor macro          <ac:structured-macro name="anchor"> (anchorName="top")
-2. TOC macro             <ac:structured-macro name="toc">    (H1–H3, style=none)
+1. Anchor macro          [ac:structured-macro name="anchor"] (anchorName="top")
+2. TOC macro             [ac:structured-macro name="toc"]    (H1–H3, style=none)
 3. Report body           markdownToStorage(markdown)
 ```
 

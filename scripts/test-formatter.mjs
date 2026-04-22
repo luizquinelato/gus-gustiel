@@ -61,3 +61,22 @@ console.log('plain-text-body open/close:', ptbOpen, '/', ptbClose, ptbOpen === p
 
 console.log('\nFirst 500 chars of output:');
 console.log(result.slice(0, 500));
+
+// Check for <ac: ANYWHERE (including inside CDATA)
+const allAcMatches = [...result.matchAll(/<[\u200B]?(?:\/?)ac:/g)];
+console.log('\nTotal <ac: pattern matches (incl ZWS variants):', allAcMatches.length);
+
+// Count ZWS escapes specifically
+const zwsMatches = (result.match(/<\u200B/g) || []).length;
+console.log('Zero-width space escapes applied:', zwsMatches);
+
+// Check if any raw <ac: (without ZWS) exist outside proper XML tag contexts
+const allRawAc = [...result.matchAll(/<ac:/g)];
+const allRawClosingAc = [...result.matchAll(/<\/ac:/g)];
+console.log('Raw <ac: tags (should only be real macros, not inside CDATA):', allRawAc.length);
+console.log('Raw </ac: tags:', allRawClosingAc.length);
+
+// Write full output for manual inspection
+import { writeFileSync } from 'fs';
+writeFileSync('scripts/debug-output.xml', result, 'utf8');
+console.log('\nFull output written to scripts/debug-output.xml');

@@ -242,28 +242,6 @@ export function buildCustomTable(headers, bodyRows, colspans) {
  * @param {string} markdown
  * @returns {string} Confluence storage format HTML string
  */
-// Map common fenced-code-block language hints to Confluence-supported identifiers.
-// Keys are lowercase; anything not listed falls back to 'none' (plain text).
-const LANG_MAP = {
-    js:         'javascript',
-    javascript: 'javascript',
-    ts:         'javascript',
-    typescript: 'javascript',
-    java:       'java',
-    python:     'python',
-    py:         'python',
-    bash:       'bash',
-    sh:         'bash',
-    sql:        'sql',
-    yaml:       'none',
-    yml:        'none',
-    json:       'javascript',
-    css:        'css',
-    html:       'html/xml',
-    xml:        'html/xml',
-    powershell: 'powershell',
-    ps1:        'powershell',
-};
 
 export function markdownToStorage(markdown) {
     // Normalize line endings — docs may originate from Windows (CRLF) or Unix (LF).
@@ -372,11 +350,10 @@ export function markdownToStorage(markdown) {
         }
 
         // Fenced code block: ``` (with optional language hint) … ```
-        // Rendered using Confluence's native code macro so content is preserved verbatim
-        // and the Fabric editor does not reject it as an "unsupported extension".
+        // Rendered as a plain <pre> block (HTML-escaped) — avoids the Confluence
+        // Fabric editor's macro validation that rejects <ac:structured-macro name="code">
+        // with HTTP 400 "Content contains unsupported extensions".
         if (trimmed.startsWith('```')) {
-            const rawLang  = trimmed.slice(3).trim().toLowerCase();
-            const lang     = LANG_MAP[rawLang] || (rawLang ? 'none' : 'none');
             i++; // skip opening fence
             const codeLines = [];
             while (i < lines.length && !lines[i].trim().startsWith('```')) {
@@ -384,20 +361,11 @@ export function markdownToStorage(markdown) {
                 i++;
             }
             i++; // skip closing fence
-            const codeContent = codeLines.join('\n');
-            const langParam   = `\n  <ac:parameter ac:name="language">${lang}</ac:parameter>`;
-            // Escape sequences that Confluence's validator misinterprets even inside CDATA:
-            //   1. ]]>  → split CDATA to prevent premature closure
-            //   2. <ac: / </ac: → split CDATA and emit as HTML entity so the validator
-            //      doesn't count them as real (unclosed) macro elements
-            const safeCdata = codeContent
-                .replace(/\]\]>/g,  ']]]]><![CDATA[>')
-                .replace(/<(\/?)ac:/g, ']]>&lt;$1ac:<![CDATA[');
-            html.push(
-                `<ac:structured-macro ac:name="code" ac:schema-version="1">${langParam}\n` +
-                `  <ac:plain-text-body><![CDATA[${safeCdata}]]></ac:plain-text-body>\n` +
-                `</ac:structured-macro>`
-            );
+            const codeContent = codeLines.join('\n')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            html.push(`<pre>${codeContent}</pre>`);
             continue;
         }
 

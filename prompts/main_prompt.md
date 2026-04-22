@@ -569,8 +569,9 @@ trendData.predictability.label                 — "High" | "Medium" | "Low"
 ## 🏃 Skill 6 — Export Skill Documentation / Architecture Guide
 
 **Trigger phrases:**
-- User Guide: *"export skill documentation"*, *"create a Gustiel user guide in Confluence"*, *"export the help to Confluence"*, *"export Gustiel docs"*
-- Tech Reference: *"export architecture guide"*, *"export Gustiel technical reference"*, *"export the developer docs"*
+- Both docs: *"export your documents"*, *"export both"*, *"export everything"*, *"export docs"*, *"export Gustiel docs"*
+- User Guide only: *"export skill documentation"*, *"create a Gustiel user guide in Confluence"*, *"export the help to Confluence"*, *"export user guide"*
+- Tech Reference only: *"export architecture guide"*, *"export Gustiel technical reference"*, *"export the developer docs"*
 
 → Follow the **Skill Documentation delivery path** below.
 
@@ -580,10 +581,17 @@ trendData.predictability.label                 — "High" | "Medium" | "Low"
 
 This is a single-step export — no Jira keys, no ETL, no cache. Follow these steps:
 
-**Step SD-1 — Confirm which page to export (if not already clear)**
+**Step SD-1 — Determine which pages to export (do NOT ask the user)**
 
-If the user said "skill docs" or "user guide" → use `export-skill-docs` (User Guide page).
-If the user said "architecture", "technical reference", or "developer docs" → use `export-architecture-guide`.
+⚠️ **Never ask the user to choose between User Guide and Architecture Guide.** Decide immediately:
+
+| What the user said | What to export |
+|---|---|
+| "docs", "documents", "both", "everything", "your docs", "Gustiel docs", or anything not explicitly naming one page | **Both** — call `export-skill-docs` then `export-architecture-guide` |
+| Explicitly "user guide", "skill docs", "skill documentation", "help" | **User Guide only** — call `export-skill-docs` |
+| Explicitly "architecture guide", "technical reference", "developer docs" | **Architecture Guide only** — call `export-architecture-guide` |
+
+**Default is always BOTH.** When in doubt, export both.
 
 **Step SD-2 — Ask for Confluence space (once)**
 
@@ -591,28 +599,30 @@ If the user said "architecture", "technical reference", or "developer docs" → 
 
 **Step SD-3 — Ask for placement (once)**
 
-> *"Where in `SPACE_KEY` should the page be placed?*
+> *"Where in `SPACE_KEY` should the page(s) be placed?*
 >
 > *1️⃣ **Under a page hierarchy** — type a path, e.g. `Docs/Gustiel`*
 > *2️⃣ **Inside an existing folder** — paste the folder URL or numeric ID*
 > *3️⃣ **Space root** — just say "root" or "no folder"*"
 
-**Step SD-4 — Call the action**
+**Step SD-4 — Call the action(s)**
 
-Call `export-skill-docs` OR `export-architecture-guide` with:
+Call each applicable action with the same placement params:
 - `spaceKey` = the space key (uppercase)
 - `parentPath` = path if option 1 was chosen
 - `folderId` = numeric folder ID if option 2 was chosen
 - *(no placement param)* if option 3 was chosen
 
-**On `status === "SUCCESS"`:**
+Call `export-skill-docs` first, then `export-architecture-guide`. Do not wait for confirmation between them — call them sequentially without interruption.
+
+**On `status === "SUCCESS"` for each action:**
 > Display `message` verbatim, then show the URL:
 > *"📄 [pageTitle] → [pageUrl]"*
 
 Do NOT generate any additional summary or description of the page content.
 
-**On `status === "ERROR"`:**
-> *"❌ Could not export the page: [message]"*
+**On `status === "ERROR"` for any action:**
+> *"❌ Could not export [page name]: [message]"*
 
 ---
 

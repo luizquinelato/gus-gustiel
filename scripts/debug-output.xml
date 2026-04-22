@@ -1,0 +1,494 @@
+<h1>Tech Ref</h1>
+<h2>1. Identity &amp; Creator Card</h2>
+<blockquote><p><strong>Action:</strong> <code>get-agent-info</code> · <strong>Resolver:</strong> <code>creator-resolver.js</code></p></blockquote>
+<h3>1.1. How It Works</h3>
+<p>No ETL pipeline. This resolver returns static data from the <code>GUSTIEL_CARD</code> constant in <code>src/resolvers/creator-resolver.js</code>.</p>
+<p>The card includes two image URL fields:</p>
+<ul><li><code>avatarImageUrl</code> — Gustiel's avatar, rendered at the top of the identity card</li><li><code>builtByImageUrl</code> — creator's photo, rendered on the Built by line</li></ul>
+<p>Both images are rendered via the prompt template (<code>prompts/main_prompt.md</code>) using <code>!<a href="url">alt</a></code> syntax — not returned from action data. Rovo's CSP blocks images returned in action payloads but renders images the LLM outputs as conversational text. See the <strong>Image Rendering in Rovo Chat</strong> section in <code>docs/architecture.md</code>.</p>
+<h3>1.2. Technical Notes</h3>
+<ul><li>Image URLs must be updated in <code>GUSTIEL_CARD</code> only — never hardcoded in the prompt template.</li><li>The agent avatar in the Rovo UI bubble is configured separately via <code>manifest.yml</code> (<code>icon: resource:agent-assets;icons/avatar.png</code>).</li></ul>
+<h3>1.3. See Also</h3>
+<ul><li><code>docs/architecture.md</code> → Image Rendering in Rovo Chat section</li><li><code>src/resolvers/creator-resolver.js</code> → <code>GUSTIEL_CARD</code> constant</li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>2. Agent Version</h2>
+<blockquote><p><strong>Action:</strong> <code>get-agent-version</code> · <strong>Resolver:</strong> <code>system-resolver.js</code></p></blockquote>
+<h3>2.1. Technical Notes</h3>
+<ul><li>Version is defined as <code>export const VERSION = "X.Y.Z"</code> in <code>src/config/constants.js</code>.</li><li>Follows <strong>Semantic Versioning (MAJOR.MINOR.PATCH)</strong>:</li><li><code>PATCH</code> — bug fixes, minor prompt tweaks</li><li><code>MINOR</code> — new features, new skills, new actions (resets PATCH to 0)</li><li><code>MAJOR</code> — architectural overhauls, breaking refactors (resets MINOR + PATCH to 0)</li><li>The version must be bumped on every code change before deploying.</li></ul>
+<h3>2.2. See Also</h3>
+<ul><li><code>.augment/rules/initial_instructions.md</code> → Versioning Rule</li><li><code>src/config/constants.js</code> → <code>VERSION</code> constant</li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>3. System Info</h2>
+<blockquote><p><strong>Action:</strong> <code>get-system-info</code> · <strong>Resolver:</strong> <code>system-resolver.js</code></p></blockquote>
+<h3>3.1. How It Works</h3>
+<p>Gustiel calls <code>getEnvFromJira()</code> from <code>src/services/jira-api-service.js</code>. This checks the connected site URL against known patterns and selects the correct <code>ENV_CONFIG</code> entry from <code>src/config/constants.js</code>.</p>
+<p>Because Forge is stateless, <code>getEnvFromJira()</code> is called independently in every resolver — it cannot be globally memoized. Each full ETL pipeline run makes 1–4 environment detection calls (one per step). Future optimization: cache result in Forge Storage with a short TTL.</p>
+<h3>3.2. Custom Field IDs by Environment</h3>
+<p>Jira custom field IDs differ between sandbox and production. <code>ENV_CONFIG</code> maps each environment:</p>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Field</p></th><th><p>Sandbox ID</p></th><th><p>Production ID</p></th></tr><tr><td colspan="2"><p>Agile Team</p></td><td><p><code>customfield_10700</code></p></td><td><p><code>customfield_10128</code></p></td></tr><tr><td colspan="2"><p>QP Planning Sessions</p></td><td><p><code>customfield_10613</code></p></td><td><p><code>customfield_10501</code></p></td></tr><tr><td colspan="2"><p>Planned Start Date</p></td><td><p><code>customfield_11321</code></p></td><td><p><code>customfield_12525</code></p></td></tr></tbody></table>
+<h3>3.3. See Also</h3>
+<ul><li><code>src/config/constants.js</code> → <code>ENV_CONFIG</code></li><li><code>src/services/jira-api-service.js</code> → <code>getEnvFromJira()</code></li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>4. Portfolio Report</h2>
+<blockquote><p><strong>Resolvers:</strong> <code>confluence-export-resolver.js</code>, <code>prepare-export-resolver.js</code>, <code>lead-time-resolver.js</code>, <code>sprint-data-resolver.js</code></p></blockquote>
+<h3>4.1. ETL Pipeline (Four Steps)</h3>
+<p>Each step is a separate Forge invocation — required by Forge's 25-second execution limit.</p>
+<p><strong>Step 1 — EXTRACT</strong> (<code>prepare-portfolio-export</code> → <code>prepare-export-resolver.js</code>)</p>
+<ul><li>Layers 1–3: Objective + Initiatives + Epics + Story counts</li><li>Sprint board discovery per team (<code>sprint-extractor.js</code>)</li><li>Writes session to Forge Storage: <code>phase = 'layers<em>1</em>4'</code></li></ul>
+<p><strong>Step 2 — LCT</strong> (<code>calculate-lead-time-data</code> → <code>lead-time-resolver.js</code>)</p>
+<ul><li>Batched Epic + Story changelog JQL (loops across invocations: returns <code>PARTIAL</code> until done)</li><li>Calculates Lead Time and Cycle Time per team</li><li>Updates session: <code>phase = 'complete'</code>, adds <code>lctByTeam</code>, <code>velocityByTeam</code></li></ul>
+<p><strong>Step 3 — SPRINT</strong> (<code>calculate-sprint-data</code> → <code>sprint-data-resolver.js</code>)</p>
+<ul><li>Reads team list from session</li><li>Calls <code>fetchSprintReportsForTeams()</code> from <code>sprint-extractor.js</code> — same function used by the Team Sprint skill</li><li>Updates session: adds <code>sprintsByTeam</code></li></ul>
+<p><strong>Step 4 — LOAD</strong> (<code>export-to-confluence</code> → <code>confluence-export-resolver.js</code>)</p>
+<ul><li>Reads full session, formats output, delivers to Confluence</li></ul>
+<h3>4.2. Session Key Format</h3>
+<p><code>export_session:&lt;accountId&gt;:&lt;portfolioKey&gt;</code></p>
+<h3>4.3. See Also</h3>
+<ul><li><code>docs/architecture.md</code> → full ETL layer map, Data Flow diagram, Batched Accumulator Pattern</li><li><code>docs/skills/06-team-sprint.md</code> → shared sprint extraction (Step 3)</li><li><code>docs/skills/08-session-cache.md</code> → clearing stale cache</li><li><code>docs/skills/09-storage.md</code> → inspecting session state</li><li><code>src/resolvers/prepare-export-resolver.js</code>, <code>lead-time-resolver.js</code>, <code>sprint-data-resolver.js</code></li><li><code>src/extractors/sprint-extractor.js</code> — shared sprint extraction</li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>5. Lead Time / Cycle Time</h2>
+<blockquote><p><strong>Actions:</strong> <code>get-team-lead-time</code> (inline response) · <code>export-team-lead-time</code> (Confluence page)</p><p><strong>Resolvers:</strong> <code>team-lead-time-resolver.js</code> · <code>team-lead-time-export-resolver.js</code></p></blockquote>
+<h3>5.1. ETL Flow</h3>
+<p>Both standalone resolvers share the same extraction and transform functions as the portfolio pipeline Step 2:</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[searchJira (hierarchyLevel in (0,1), last 6 months, Done or In Progress)
+  → extractItemForLCT()             [jira-extractor.js]
+  → mergeItemsIntoLCTAccumulator()  [portfolio-transformer.js]
+  → finalizeLCTAccumulator()        [portfolio-transformer.js]
+  → formatLCTSection()              [markdown-formatter.js]]]></ac:plain-text-body>
+</ac:structured-macro>
+<h3>5.2. Standalone vs Portfolio</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p></p></th><th><p>Standalone</p></th><th><p>Portfolio Step 2</p></th></tr><tr><td colspan="2"><p>Scope</p></td><td><p>One or more teams by name</p></td><td><p>All teams from portfolio session</p></td></tr><tr><td colspan="2"><p>Input</p></td><td><p><code>teamNames</code> (comma-separated)</p></td><td><p>Team list read from session</p></td></tr><tr><td colspan="2"><p>Session required</p></td><td><p>❌ Never</p></td><td><p>✅ Yes</p></td></tr><tr><td colspan="2"><p>Output</p></td><td><p>Inline response or Confluence page</p></td><td><p>Written to session for Step 4 export</p></td></tr></tbody></table>
+<h3>5.3. Response Fields (Inline — <code>get-team-lead-time</code>)</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Field</p></th><th><p>Use</p></th></tr><tr><td colspan="2"><p><code>response.message</code></p></td><td><p>Pre-formatted Markdown table — display verbatim</p></td></tr><tr><td colspan="2"><p><code>response.teams</code></p></td><td><p>Array of team names analyzed</p></td></tr><tr><td colspan="2"><p><code>response.lctByTeam</code></p></td><td><p>Structured LCT data per team — use for follow-up questions</p></td></tr></tbody></table>
+<h3>5.4. See Also</h3>
+<ul><li><code>docs/skills/04-portfolio.md</code> → portfolio pipeline (Step 2 context)</li><li><code>docs/architecture.md</code> → Batched Accumulator Pattern, ETL layer map</li><li><code>src/resolvers/team-lead-time-resolver.js</code> · <code>team-lead-time-export-resolver.js</code></li><li><code>src/transformers/portfolio-transformer.js</code> → <code>finalizeLCTAccumulator</code></li><li><code>src/extractors/jira-extractor.js</code> → <code>extractItemForLCT</code></li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>6. Team Sprint Analysis</h2>
+<blockquote><p><strong>Action:</strong> <code>get-team-sprint-analysis</code> · <strong>Resolver:</strong> <code>team-sprint-resolver.js</code></p></blockquote>
+<h3>6.1. Response Fields</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Field</p></th><th><p>Use</p></th></tr><tr><td colspan="2"><p><code>response.message</code></p></td><td><p>Pre-formatted Markdown (table + trend sub-sections) — display verbatim</p></td></tr><tr><td colspan="2"><p><code>response.sprints[].name</code></p></td><td><p>Sprint names — answer *"what were the sprint names?"*</p></td></tr><tr><td colspan="2"><p><code>response.boardId</code></p></td><td><p>Numeric board ID — answer *"what's the board ID for X?"*</p></td></tr><tr><td colspan="2"><p><code>response.board</code></p></td><td><p>Board display name</p></td></tr><tr><td colspan="2"><p><code>response.trendData</code></p></td><td><p>Structured trend analytics — present when ≥5 valid sprints; <code>null</code> otherwise</p></td></tr></tbody></table>
+<p>All fields are populated from a single action call (Response Reuse Pattern — see <code>docs/architecture.md</code>).</p>
+<h3>6.2. Internal Pipeline</h3>
+<p><code>team-sprint-resolver.js</code> orchestrates:</p>
+<p>1. <strong>EXTRACT</strong> <code>discoverBoardIdForTeam</code> — two-pass JQL to find <code>boardId</code> without a session</p>
+<p>2. <strong>EXTRACT</strong> <code>getRecentBoardClosedSprints(boardId, 6)</code> — Board API for last 6 sprint IDs</p>
+<p>3. <strong>EXTRACT</strong> <code>fetchSprintReportsForTeams</code> — GreenHopper reports, bounded by semaphore (max 3 concurrent)</p>
+<p>4. <strong>TRANSFORM</strong> <code>computeSprintTrends(validSprints)</code> — pure; returns <code>null</code> when &lt; 5 valid sprints</p>
+<p>5. <strong>LOAD</strong> <code>formatTeamSprintChat</code> — sprint table + trend sub-sections as Markdown</p>
+<h3>6.3. Relationship to Portfolio (Skill 04)</h3>
+<p>The same <code>fetchSprintReportsForTeams</code> and <code>computeSprintTrends</code> functions power both this skill and the portfolio pipeline's Step 3. One implementation, shared.</p>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p></p></th><th><p>Team Sprint skill</p></th><th><p>Portfolio Step 3</p></th></tr><tr><td colspan="2"><p>Scope</p></td><td><p>One team</p></td><td><p>All teams</p></td></tr><tr><td colspan="2"><p>Board discovery</p></td><td><p>JQL-based (no session)</p></td><td><p>Reads from session (faster)</p></td></tr><tr><td colspan="2"><p>Output</p></td><td><p>Markdown response</p></td><td><p>Written to session for export</p></td></tr><tr><td colspan="2"><p>Requires session</p></td><td><p>❌ Never</p></td><td><p>✅ Yes</p></td></tr></tbody></table>
+<h3>6.4. See Also</h3>
+<ul><li><code>docs/skills/04-portfolio.md</code> → how sprint data feeds the portfolio</li><li><code>docs/architecture.md</code> → Response Reuse Pattern, sprint-extractor.js details</li><li><code>src/extractors/sprint-extractor.js</code> → <code>discoverBoardIdForTeam</code>, <code>fetchSprintReportsForTeams</code></li><li><code>src/utils/concurrency.js</code> → <code>makeSemaphore</code></li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>7. Export Skill Documentation</h2>
+<blockquote><p><strong>Action:</strong> <code>export-skill-docs</code> · <strong>Resolver:</strong> <code>skill-docs-resolver.js</code></p></blockquote>
+<h3>7.1. How It Works</h3>
+<p>Content comes from the bundled <code>USER<em>GUIDE</em>MD</code> export in <code>src/docs/index.js</code>, generated at deploy time by <code>scripts/bundle-docs.mjs</code>. Each skill doc's <code>## 📋 User Guide</code> section is extracted and concatenated. The DEV/PROD preamble and environment metadata are prepended at runtime.</p>
+<p>After the page is upserted, the resolver uploads any bundled screenshots as Confluence attachments (<code>uploadAttachment</code> in <code>confluence-api-service.js</code>).</p>
+<h3>7.2. Key Patterns</h3>
+<ul><li><strong>Bundled screenshots</strong>: <code>ATTACH:filename.png</code> in markdown → Confluence <code>&lt;ac:image&gt;</code> attachment tag</li><li><strong>Upsert logic</strong>: find by title → update in place → move + update → create (same as portfolio export)</li><li><strong>No Jira ETL</strong>: documentation-only. No session, no cache.</li></ul>
+<h3>7.3. See Also</h3>
+<ul><li><code>scripts/bundle-docs.mjs</code> → how docs are bundled and screenshots are base64-encoded</li><li><code>src/resolvers/skill-docs-resolver.js</code></li><li><code>src/services/confluence-api-service.js</code> → <code>uploadAttachment</code></li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>8. Clear My Session Cache</h2>
+<blockquote><p><strong>Action:</strong> <code>wipe-user-storage</code> · <strong>Resolver:</strong> <code>storage-admin-resolver.js</code></p></blockquote>
+<h3>8.1. How It Works</h3>
+<p>Deletes all Forge Storage keys matching <code>export_session:&lt;your-accountId&gt;:*</code>. Requires <code>confirm = "YES"</code> (the LLM passes this automatically).</p>
+<p>The security boundary is enforced via <code>startsWith</code> prefix filtering — non-admins cannot reach other users' keys.</p>
+<p>To wipe all storage for all users, admins use the separate <code>wipe-global-storage</code> action.</p>
+<h3>8.2. See Also</h3>
+<ul><li><code>docs/skills/09-storage.md</code> → inspect session state before clearing</li><li><code>docs/skills/04-05-portfolio.md</code> → how sessions are built</li><li><code>src/resolvers/storage-admin-resolver.js</code></li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>9. Storage Inspection</h2>
+<blockquote><p><strong>Action:</strong> <code>inspect-storage</code> · <strong>Resolver:</strong> <code>storage-admin-resolver.js</code></p></blockquote>
+<h3>9.1. How It Works</h3>
+<p>Non-admins: filtered to keys starting with <code>export_session:&lt;accountId&gt;:</code>.</p>
+<p>Admins: access to all keys including other users' sessions and the admin registry.</p>
+<p>The <code>phase</code> field drives the ETL state machine — see <code>docs/architecture.md</code> → Storage Architecture section.</p>
+<h3>9.2. See Also</h3>
+<ul><li><code>docs/skills/08-session-cache.md</code> → clearing sessions</li><li><code>docs/skills/10-account-id.md</code> → finding your accountId</li><li><code>docs/skills/admin.md</code> → admin-level storage operations</li><li><code>src/resolvers/storage-admin-resolver.js</code></li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>10. My Account ID</h2>
+<blockquote><p><strong>Action:</strong> <code>get-my-account-id</code> · <strong>Resolver:</strong> <code>storage-admin-resolver.js</code></p></blockquote>
+<h3>10.1. Technical Notes</h3>
+<ul><li>Requires <code>confirm = "YES"</code> (the LLM passes this automatically).</li><li>The <code>accountId</code> is read from the Forge execution context (<code>context.accountId</code>) — not from a Jira API call.</li><li>Super-admin status is checked against <code>SUPER<em>ADMIN</em>ACCOUNT_ID</code> in <code>src/config/constants.js</code>, not the dynamic admin registry.</li></ul>
+<h3>10.2. See Also</h3>
+<ul><li><code>docs/skills/admin.md</code> → how to use accountId to grant admin access</li><li><code>docs/skills/09-storage.md</code> → constructing storage key paths</li><li><code>src/resolvers/storage-admin-resolver.js</code></li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>11. Admin Skills</h2>
+<blockquote><p><strong>Resolver:</strong> <code>storage-admin-resolver.js</code></p></blockquote>
+<h3>11.1. Two-Tier Access Model</h3>
+<p>Gustiel uses a static super-admin (<code>SUPER<em>ADMIN</em>ACCOUNT_ID</code> in <code>src/config/constants.js</code>) and a dynamic admin registry stored as a dedicated Forge Storage key. The super-admin cannot be removed. Dynamic admins can be added and removed at runtime.</p>
+<h3>11.2. Security Boundary</h3>
+<p>Admin check runs at the top of every restricted action. Non-admins are restricted by prefix:</p>
+<p><code>startsWith('export_session:&lt;accountId&gt;:')</code> — they can only see their own sessions.</p>
+<h3>11.3. Action Map</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Intent</p></th><th><p>Action</p></th><th><p>Required params</p></th></tr><tr><td colspan="2"><p>Inspect all</p></td><td><p><code>inspect-storage</code></p></td><td><p>no key</p></td></tr><tr><td colspan="2"><p>Wipe all sessions</p></td><td><p><code>wipe-global-storage</code></p></td><td><p><code>confirm = "YES"</code></p></td></tr><tr><td colspan="2"><p>List admins</p></td><td><p><code>list-admins</code></p></td><td><p><code>confirm = "YES"</code></p></td></tr><tr><td colspan="2"><p>Add admin</p></td><td><p><code>add-admin</code></p></td><td><p><code>adminAccountId</code></p></td></tr><tr><td colspan="2"><p>Remove admin</p></td><td><p><code>remove-admin</code></p></td><td><p><code>adminAccountId</code></p></td></tr><tr><td colspan="2"><p>Clear registry</p></td><td><p><code>clear-admin-registry</code></p></td><td><p><code>confirm = "YES"</code></p></td></tr></tbody></table>
+<h3>11.4. See Also</h3>
+<ul><li><code>docs/skills/09-storage.md</code> → storage inspection</li><li><code>docs/skills/10-account-id.md</code> → finding accountId</li><li><code>src/resolvers/storage-admin-resolver.js</code></li><li><code>src/config/constants.js</code> → <code>SUPER<em>ADMIN</em>ACCOUNT_ID</code></li></ul>
+<hr/>
+<hr/>
+<hr/>
+<blockquote><p><strong>Current version:</strong> see <code>src/config/constants.js</code> → <code>VERSION</code></p><p><strong>Platform:</strong> Atlassian Forge (serverless, runs inside Atlassian cloud)</p><p><strong>Agent type:</strong> Rovo AI Agent (conversational, action-based)</p></blockquote>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>12. What Is Gustiel?</h2>
+<p>Gustiel is a <strong>Rovo AI Agent for Jira Portfolio Analysis</strong>. It lives inside the Atlassian ecosystem and is invoked conversationally through Rovo Chat. Users interact with it in plain English — Gustiel translates intent into structured Jira/Confluence API calls, runs the results through an analytics pipeline, and delivers formatted reports either in chat or as permanent Confluence pages.</p>
+<h3>12.1. Full Capability Map</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Skill</p></th><th><p>#</p></th><th><p>Mode</p></th><th><p>Description</p></th></tr><tr><td colspan="2"><p>Portfolio Report (Confluence)</p></td><td><p>04</p></td><td><p>Export</p></td><td><p>Full ETL pipeline → permanent Confluence page per portfolio key</p></td></tr><tr><td colspan="2"><p>Portfolio Analysis (Chat)</p></td><td><p>05</p></td><td><p>Chat</p></td><td><p>Same ETL pipeline → interactive chat, section-by-section pagination</p></td></tr><tr><td colspan="2"><p>Team Sprint Analysis</p></td><td><p>06</p></td><td><p>Chat</p></td><td><p>On-demand sprint velocity + trend analytics for a single team</p></td></tr><tr><td colspan="2"><p>Export Skill Documentation</p></td><td><p>07</p></td><td><p>Export</p></td><td><p>Exports a Gustiel user guide / skill reference to Confluence</p></td></tr><tr><td colspan="2"><p>Clear My Session Cache</p></td><td><p>08</p></td><td><p>Action</p></td><td><p>Deletes the user's own cached ETL session from Forge Storage</p></td></tr><tr><td colspan="2"><p>Storage Inspection</p></td><td><p>09</p></td><td><p>Action</p></td><td><p>Inspects Forge Storage session state (own or all, depending on role)</p></td></tr><tr><td colspan="2"><p>Get My Account ID</p></td><td><p>10</p></td><td><p>Action</p></td><td><p>Returns the calling user's Atlassian accountId</p></td></tr><tr><td colspan="2"><p>Admin — Wipe All Storage</p></td><td><p>Admin</p></td><td><p>Action</p></td><td><p>Deletes all session data for all users (admin only)</p></td></tr><tr><td colspan="2"><p>Admin — Manage Admin Registry</p></td><td><p>Admin</p></td><td><p>Action</p></td><td><p>Add/remove/list dynamic admins</p></td></tr></tbody></table>
+<h3>12.2. Report Content (per portfolio key)</h3>
+<p>A full portfolio export produces a single Confluence page with these sections, in order:</p>
+<p>1. <strong>Table of Contents</strong> — auto-generated from H2 headings via the native Confluence TOC macro</p>
+<p>2. <strong>Portfolio Overview</strong> — objective title, environment, creation timestamp, quarter filter (if applied)</p>
+<p>3. <strong>📊 Portfolio Summary</strong> — initiative status table + overdue counts</p>
+<p>4. <strong>📋 Epic Status Summary</strong> — epic counts by status, grouped by team</p>
+<p>5. <strong>🏁 Initiatives</strong> — per-initiative table with % complete, expected %, RYG badge, due date, days late</p>
+<p>6. <strong>🏷️ Epics by Team</strong> — per-team H3 section with epic table (RYG, lead time, story count, dates)</p>
+<p>7. <strong>🚀 Innovation Velocity</strong> — throughput comparison table across teams</p>
+<p>8. <strong>⏱️ Lead / Cycle Time</strong> — per-team lead time and cycle time tables with definitions</p>
+<p>9. <strong>🏃 Sprint Analysis</strong> — per-team sprint velocity table (last 6 closed sprints) + optional trend analytics:</p>
+<ul><li>📈 Velocity Trend (stability coefficient of variation + 3-sprint direction flag)</li><li>🔀 Scope Management (churn rate, additions completion rate)</li><li>🎯 Predictability Score (weighted composite: 🟢=2 · 🟡=1 · 🔴=0, max 6 pts)</li></ul>
+<p>10. <strong>Back-to-top links</strong> — automatically injected before every H2 (except the first)</p>
+<p>Scope is auto-detected (Objective / Initiative / Epic) and the section set rendered adjusts accordingly — e.g., an Epic-scope page skips the Initiatives table and shows only the Epic's stories.</p>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>13. Architecture Overview</h2>
+<p>Gustiel is built on an <strong>ETL (Extract → Transform → Load)</strong> pattern.</p>
+<p>Every feature must follow this layered separation of concerns.</p>
+<p>The resolver is only the entry/exit door — it never contains business logic.</p>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>14. Layer Map</h2>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[src/
+├── config/
+│   └── constants.js               # Version, workflow dicts, field IDs, makeSessionKey — no logic
+│
+├── services/
+│   ├── jira-api-service.js        # Raw HTTP I/O — the ONLY layer that calls Jira
+│   └── confluence-api-service.js  # Confluence page CRUD, folder + space resolution
+│
+├── extractors/               # EXTRACT layer
+│   ├── jira-extractor.js     # Raw API response → clean domain objects
+│   └── sprint-extractor.js   # Sprint board discovery, GreenHopper fetch, shared semaphore
+│
+├── transformers/             # TRANSFORM layer
+│   └── portfolio-transformer.js  # Pure calculations — no I/O, no rendering
+│
+├── formatters/               # LOAD layer
+│   ├── markdown-formatter.js      # Domain data → Markdown (chat + Confluence section bodies)
+│   └── confluence-formatter.js    # Markdown → Confluence Storage Format (XHTML); custom table colspan
+│
+├── resolvers/                # Entry/Exit handlers — thin orchestrators only
+│   ├── portfolio-report-resolver.js   # Full ETL report (summary + team pages); multi-key Isolated/Merged
+│   ├── confluence-export-resolver.js  # Confluence export (single or combined page); scope-aware
+│   ├── prepare-export-resolver.js     # ETL step 1 — team + sprint board discovery
+│   ├── lead-time-resolver.js          # ETL step 2 — LCT batched changelog query
+│   ├── sprint-data-resolver.js        # ETL step 3 — GreenHopper sprint reports per team
+│   ├── team-sprint-resolver.js        # Individual team sprint analysis (chat); returns boardId
+│   ├── check-cache-resolver.js        # ETL cache state probe; scope detection
+│   ├── skill-docs-resolver.js         # Export Skill Documentation to Confluence
+│   ├── storage-admin-resolver.js      # Admin: full storage access; users: own sessions only
+│   ├── portfolio-analysis-resolver.js # Analysis / Q&A skills; multi-key Isolated/Merged
+│   ├── system-resolver.js
+│   └── creator-resolver.js
+│
+└── utils/
+    ├── token-estimator.js    # fitWithinBudget() — used by summary phase
+    └── concurrency.js        # makeSemaphore() — shared GreenHopper rate-limit primitive]]></ac:plain-text-body>
+</ac:structured-macro>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>15. Layer Responsibilities</h2>
+<h3>15.1. <code>services/</code> — Raw I/O</h3>
+<ul><li>Only layer allowed to make HTTP calls to Jira.</li><li>Rate limiting, retries, and any future caching belong here.</li><li>Returns raw API JSON — never interprets it.</li></ul>
+<h3>15.2. <code>extractors/</code> — Extract</h3>
+<ul><li>Maps raw Jira JSON into clean <strong>domain objects</strong>. Also owns async extraction that coordinates service calls.</li><li>The only layer allowed to know Jira's raw field structure.</li><li><strong><code>jira-extractor.js</code></strong> — Pure functions: <code>extractItem(issue, envFields)</code>, <code>extractStoryStatus(issue)</code>, <code>extractItemScope(issue)</code>, <code>extractItemForLCT(issue, agileTeamField)</code>, <code>chunk(arr, n)</code>.</li><li><strong><code>sprint-extractor.js</code></strong> — Sprint-specific extraction (async). <code>extractNewestSprintIdByTeam(rawIssues, sprintField, epicKeyToTeam)</code> — pure; maps issue sprint fields to team board/sprint metadata. <code>enrichTeamSprintListsFromBoardApi(newestSprintIdByTeam, count, cutoffMs)</code> — async; replaces issue-derived sprint lists with authoritative Board API data. <code>discoverBoardIdForTeam(teamName, agileTeamFieldNum, sprintField)</code> — async; two-pass JQL boardId discovery for single-team analysis. <code>fetchSprintReportsForTeams(teams, newestSprintIdByTeam)</code> — async; fetches GreenHopper reports with shared semaphore rate-limiting; used by both the portfolio pipeline and individual sprint resolver.</li><li>All <strong>pure</strong> functions are stateless (no side effects, no I/O) and safe at any concurrency level.</li></ul>
+<h3>15.3. <code>transformers/</code> — Transform</h3>
+<ul><li>Pure calculations and data shaping.</li><li>No I/O, no Markdown, no rendering of any kind.</li><li>Functions: <code>isOverdue(item)</code>, <code>getDaysOverdue(item)</code>, <code>groupByStatusOrdered(items, workflow)</code>, <code>getSpecialCategory(...)</code>, <code>buildCountMap(items, getParentKey, checkDone)</code>, <code>filterOverdue(items)</code>, <code>calculateLeadTime(epics, workflow)</code>, <code>calculateExpectedPct(item)</code>, <code>getRygStatus(item, actualPct, expectedPct, days, counts)</code>.</li><li><code>getRygStatus</code> rules: Done → 🔵. Not Started (To Do + no done children + not overdue) → 🔘 / 🔘 🚩⚠️. Otherwise the badge is the <strong>worst of two independent signals</strong> — (1) Overdue signal: 1–14d → 🟢, 15–28d → 🟡, 29+d → 🔴; (2) Completion signal: delta ≤ 20% of expectedPct → 🟢, ≤ 50% → 🟡, &gt; 50% → 🔴. A number suffix (e.g. 30d) is appended when overdue. Overdue backlog items fall through to RYG instead of defaulting to gray.</li><li>All functions are <strong>stateless</strong> — safe at any concurrency level.</li></ul>
+<h3>15.4. <code>formatters/</code> — Load</h3>
+<ul><li>Converts transformed domain data into the final output format.</li><li>No I/O, no calculation — only presentation.</li><li><strong><code>markdown-formatter.js</code></strong> — Domain data → Markdown (chat output).</li><li><code>EPIC<em>RYG</em>LEGEND</code> — exported blockquote constant; inserted once per report below the Epics heading as a status key.</li><li><code>formatProgress(done, total)</code>, <code>formatStatusTable(grouped)</code>, <code>formatStoryStatusTable(items, workflow)</code>, <code>formatInitiativeTable(items, baseUrl, countMap)</code>.</li><li><code>formatEpicList(epics, baseUrl, workflow, countMap)</code> — all teams joined into one string (chat output).</li><li><code>formatEpicsByTeam(epics, baseUrl, workflow, countMap)</code> — one <code>{ team, markdown }</code> object per team (Confluence export / analysis).</li><li>Both epic formatters include the team epic count in the <code>### 🏷️ Team <em>(N epics)</em></code> heading.</li><li><code>dateDeltaCell(baseDate, actualDate, baseLabel, actualLabel)</code> — internal helper; produces a two-row cell with bold labels (<code><strong>Planned</strong></code>, <code><strong>Expected</strong></code>, <code><strong>Actual</strong></code>) separated by the <code>↵</code> sentinel.</li><li><code>formatInnovationVelocityTable(teams, teamStats)</code>.</li><li><code>formatInnovationVelocityByTeam(allTeams, teamStats, lctReady, velocityOnly)</code> — combined velocity + per-team bullet blocks. Pass <code>velocityOnly=true</code> to emit only the velocity legend, overall summary, and velocity table (no Lead/Cycle Time tables); used in the chat analysis resolver when the LCT section is rendered separately.</li><li><code>formatLCTSection(allTeams, teamStats, lctReady, renderHeading)</code> — standalone Lead and Cycle Time section. Renders its own legend (Lead Time and Cycle Time definitions) at the top. When <code>renderHeading=true</code> (chat/default) emits a <code>### H3</code> heading and team sub-headings as <code>#### H4</code>; when <code>renderHeading=false</code> (Confluence, caller owns <code>## H2</code>) emits team sub-headings as <code>### H3</code> so Confluence TOC numbering is correct (5.1, 5.2… not 5.0.1, 5.0.2…).</li><li><code>formatSprintSection(allTeams, sprintsByTeam, trendsByTeam?)</code> — Sprint Analysis H2 block for Confluence export. Renders the velocity table per team followed by three H4 trend sub-sections (Velocity Trend, Scope Management, Predictability Score) when <code>trendsByTeam[team]</code> is present. Handles all-failed/partial/empty sprint states.</li><li><code>formatTeamSprintChat(teamName, boardName, boardId, sprints, trendData?)</code> — Sprint velocity table for chat. Same structure as <code>formatSprintSection</code> for a single team. Appends trend sub-sections when <code>trendData</code> is non-null; emits a "need 5 sprints" note when data is insufficient.</li><li><code>formatSprintTrendSections(trendData)</code> — Private helper shared by both sprint formatters. Renders the three H4 sub-sections with description blockquotes and metric tables from a <code>computeSprintTrends()</code> result object. Never called directly from resolvers.</li><li><strong><code>confluence-formatter.js</code></strong> — Markdown → Confluence Storage Format (XHTML). Pure and stateless.</li><li><code>buildTocMacro(minLevel, maxLevel)</code> — native Confluence TOC macro prepended to every exported page.</li><li><code>buildAnchorMacro(anchorName)</code> — named anchor macro (default <code>"top"</code>) for <code><a href="#top">⬆ Back to top</a></code> links.</li><li><code>markdownToStorage(markdown)</code> — handles headings, blockquotes (consecutive <code>&gt; </code> lines merged into one <code>&lt;blockquote&gt;</code>), unordered lists, <code>&lt;hr/&gt;</code>, tables, and inline formatting.</li><li><code>renderTable(headers, bodyRows)</code> — full-width Confluence table with variable colspan widths. <code>WIDE_HEADERS = { 'Start', 'Due' }</code> gives those columns (and always the first/Epic column) <code>colspan="2"</code> so they render at 2× the width of other columns. Virtual column count adjusts automatically.</li><li><code>buildCustomTable(headers, bodyRows, colspans)</code> — explicit per-column colspan control. Use when <code>renderTable</code> column widths are wrong (e.g., <code>[1, 1, 3]</code> for a narrow step column and a triple-wide description column). Supports the same inline Markdown as <code>markdownToStorage</code>.</li><li><code>STATUS_BG</code> — map of exact Jira status names → <strong>Confluence named highlight colours</strong> (<code>light-grey</code>, <code>light-blue</code>, <code>light-green</code>). Named colours are theme-aware: Confluence Cloud maps them to appropriate shades in both light and dark mode. Hex codes bypass this mapping and always render light, making text invisible in dark mode — do not reintroduce hex codes here.</li><li><code>tdStyle(content)</code> — returns the <code>data-highlight-colour="&lt;named-colour&gt;"</code> attribute for matching status cells. No <code>style=</code> fallback — named colour values are not valid CSS so the fallback would be ignored anyway. The <code>data-highlight-colour</code> attribute is the correct mechanism on Confluence Cloud.</li><li><code>cellToHtml(content)</code> — splits on <code>↵</code> sentinel and wraps each part in its own <code>&lt;p&gt;</code> tag for multi-line cells.</li><li>Only these files change when the output format changes — resolvers are untouched.</li></ul>
+<h3>15.5. <code>resolvers/</code> — Orchestrators</h3>
+<ul><li>Receive the Rovo event, call the ETL pipeline, return the structured response.</li><li>Must <strong>not</strong> contain business logic, calculations, or Markdown string building.</li><li>Pattern: <code>receive → extract → transform → format → return</code>.</li><li><strong><code>confluence-export-resolver.js</code></strong> — accepts <code>portfolioKeys</code> (one or comma-separated), resolves destination (folder / parent page / space root), calls <code>buildReportForKey</code> per key. Scope-aware: detects Objective / Initiative / Epic via <code>extractItemScope</code> and renders only the relevant sections. Reads pre-computed LCT session from Forge Storage (written by <code>lead-time-resolver</code>). Each report includes a <code><em>Created at: YYYY-MM-DD HH:MM</em></code> metadata line (timezone: <code>REPORT_TIMEZONE</code>) and a <code><a href="#top">⬆ Back to top</a></code> link. The page title date is timezone-aware (BRT). Accepts optional <code>titleSuffix</code> — <strong>mandatory when 2+ individual reports share the same destination</strong> to prevent page overwrites (agent uses the portfolio key or objective name as suffix). Assembled page is prefixed with anchor + TOC macro, then upserted (Update → Move → Create). Returns <code>pageUrl</code>, <code>counts</code>, <code>wasMoved</code>, <code>wasUpdated</code>, <code>resolvedFolderId</code>.</li><li><strong><code>prepare-export-resolver.js</code></strong> — ETL step 1. Scope-aware: handles Objective (Layer 1–3), Initiative (direct-child epics + stories), and Epic (stories under epic) key types. Accepts <code>portfolioKeys</code> (comma-separated) for multi-key runs — saves one independent session per key (<code>export<em>session:&lt;accountId&gt;:&lt;key&gt;</code>). Sessions are combined at query time; no composite session is stored. Persists <code>phase: 'layers</em>1_4'</code> and <code>detectedScope</code> field.</li><li><strong><code>lead-time-resolver.js</code></strong> — ETL step 2. Reads session written by <code>prepare-export-resolver</code>, runs a combined Epic + Story changelog JQL query batched across multiple Forge invocations (returning <code>PARTIAL</code> until done). Finalises <code>lctByTeam</code>, <code>velocityByTeam</code>, <code>overallVelocity</code> and updates session to <code>phase: 'complete'</code>.</li><li><strong><code>check-cache-resolver.js</code></strong> — Probes the session for a given key. Detects scope via <code>extractItemScope</code>. Returns <code>hasCachedData</code>, <code>phase</code>, <code>detectedScope</code>, <code>parentKey</code>, and <code>cachedAt</code> (formatted in <code>REPORT_TIMEZONE</code>). Treats sessions written by old code (no <code>detectedScope</code> field + empty <code>allTeams</code>) as stale.</li><li><strong><code>creator-resolver.js</code></strong> — Static data only; no ETL pipeline. Exports <code>getAgentInfo</code> which returns the <code>GUSTIEL_CARD</code> constant. Called by the single <code>get-agent-info</code> action for both "Who are you?" and "Who is your creator?" questions. The card contains two image URL fields: <code>avatarImageUrl</code> (Gustiel's avatar shown inline at the top of the identity card) and <code>builtByImageUrl</code> (creator photo shown inline on the Built by line). Images are rendered as standard markdown <code>!<a href="url">alt</a></code> — see <strong>Image Rendering</strong> section below.</li><li><strong><code>sprint-data-resolver.js</code></strong> — ETL step 3. Reads the session written by <code>prepare-export-resolver</code>, calls <code>fetchSprintReportsForTeams</code> from <code>sprint-extractor.js</code> for all teams, writes <code>sprintsByTeam</code> back to the session. Returns <code>PARTIAL</code> while teams are being processed across multiple invocations, <code>SUCCESS</code> when complete, <code>NO_SESSION</code> when the session is missing.</li><li><strong><code>team-sprint-resolver.js</code></strong> — Individual on-demand sprint analysis. Calls <code>discoverBoardIdForTeam</code> + <code>getRecentBoardClosedSprints</code> + <code>fetchSprintReportsForTeams</code> (extract), then <code>computeSprintTrends</code> (transform), then <code>formatTeamSprintChat</code> (load). Returns <code>{ status, team, board, boardId, sprints, trendData, message }</code> — <code>boardId</code>, <code>sprints[].name</code>, and <code>trendData</code> allow Rovo to answer derived questions without a separate skill.</li><li><strong><code>skill-docs-resolver.js</code></strong> — Exports a comprehensive Confluence page documenting all Gustiel skills, usage examples, access levels, the ETL pipeline, Jira hierarchy support, and session cache. Uses <code>buildCustomTable</code> for explicit colspan control in the ETL and hierarchy tables. Same upsert/folder/path logic as <code>confluence-export-resolver</code>.</li><li><strong><code>storage-admin-resolver.js</code></strong> — Multi-path storage management. Admins: list all keys, read any key, wipe all storage, manage the admin registry. Non-admins: list/read only their own <code>export_session:&lt;accountId&gt;:*</code> keys. Uses <code>makeSessionKey</code> prefix check as the security boundary. Uses <code>startsWith</code> from Forge Storage query API for efficient per-user key filtering.</li></ul>
+<h3>15.6. <code>utils/</code> — Shared Primitives</h3>
+<ul><li><strong><code>token-estimator.js</code></strong> — <code>fitWithinBudget(sections, budget)</code> trims section array to stay within an LLM token budget. Used by the summary phase of the portfolio report resolver.</li><li><strong><code>concurrency.js</code></strong> — <code>makeSemaphore(limit)</code> creates a counting semaphore for bounded concurrency. Used by <code>sprint-extractor.js</code> to limit parallel GreenHopper API calls (default: 3). Never define semaphore primitives inside a resolver — import from here.</li></ul>
+<h3>15.7. <code>config/constants.js</code> — Configuration</h3>
+<ul><li>Single source of truth for version, workflow status dicts, field IDs, and the session key format.</li><li>Workflow statuses are <strong>dicts</strong> (not arrays): <code>{ order, category, specialCategory }</code>.</li><li>To change a status behaviour: edit the dict here only. No resolver logic to touch.</li><li><code>TEAMS<em>PER</em>BATCH = 4</code> — controls how many teams auto-chain per user "next" before a mandatory pause (see Pagination Model below).</li><li><code>makeSessionKey(accountId, portfolioKey)</code> — canonical Forge Storage key builder: <code>export_session:&lt;accountId&gt;:&lt;portfolioKey&gt;</code>. All resolvers import this; never define a local version.</li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>16. Response Reuse Pattern</h2>
+<h3>16.1. Principle</h3>
+<p>Gustiel resolvers return <strong>rich, structured responses</strong> — more fields than the primary use case strictly requires. This lets Rovo answer a family of related questions from a single action call, without creating separate thin GET resolvers for every possible follow-up.</p>
+<p>This is a deliberate design choice. Rovo is an LLM — it can read a structured JSON response and extract exactly what the user asked for, whether that is the full formatted table, just a list of names, or a single ID field.</p>
+<h3>16.2. Rule</h3>
+<blockquote><p><strong>Before creating a new resolver or action, ask: does an existing resolver already retrieve this data as part of its normal work?</strong></p><p>If yes, add the field to that resolver's response and document it in the prompt. Do not create a new action.</p></blockquote>
+<h3>16.3. Current examples</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Question</p></th><th><p>Action called</p></th><th><p>Field used</p></th></tr><tr><td colspan="2"><p>"Show sprint velocity for Titan"</p></td><td><p><code>get-team-sprint-analysis</code></p></td><td><p><code>response.message</code> (pre-formatted table)</p></td></tr><tr><td colspan="2"><p>"List the past sprint names for Titan"</p></td><td><p><code>get-team-sprint-analysis</code></p></td><td><p><code>response.sprints[].name</code></p></td></tr><tr><td colspan="2"><p>"What board is Titan on?"</p></td><td><p><code>get-team-sprint-analysis</code></p></td><td><p><code>response.board</code>, <code>response.boardId</code></p></td></tr><tr><td colspan="2"><p>"What's the board ID for Warriors?"</p></td><td><p><code>get-team-sprint-analysis</code></p></td><td><p><code>response.boardId</code></p></td></tr></tbody></table>
+<p>All four questions use the same action. The resolver fetches and parses the data once; Rovo selects the relevant field for each question type.</p>
+<h3>16.4. How to implement correctly</h3>
+<p>1. <strong>Resolver</strong> — return all fields the ETL pipeline already computed, not just those used by <code>response.message</code>.</p>
+<p>2. <strong>Prompt routing section</strong> — document every response field by name and describe which user questions map to it. Example:</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[   response.message         → full sprint table + trend sections (display verbatim)
+   response.boardId         → answer "what board is X on?" or "board ID for X?"
+   response.sprints[].name  → answer "list sprint names for X"
+   response.trendData       → structured analytics; Rovo generates insights on demand]]></ac:plain-text-body>
+</ac:structured-macro>
+<p>3. <strong>Skill description in the prompt help list</strong> — mention the derived question types alongside the primary use case so users discover them.</p>
+<p>4. <strong>Skill Documentation export</strong> — include the derived capabilities in the trigger phrase list for that skill section.</p>
+<h3>16.5. Anti-patterns to avoid</h3>
+<ul><li>❌ Creating a <code>get-board-id</code> resolver that only calls <code>discoverBoardIdForTeam</code> and returns one field — the existing sprint resolver already does this work.</li><li>❌ Returning only <code>message</code> from a resolver when the underlying data has richer structure that users may ask about.</li><li>❌ Documenting only the primary trigger phrases in the prompt, leaving derived questions unrouted (Rovo will either fail silently or call the wrong action).</li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>17. Rules for New Features</h2>
+<p>1. <strong>New data from Jira?</strong> → Add a function to <code>extractors/jira-extractor.js</code>.</p>
+<p>2. <strong>New calculation or grouping?</strong> → Add a function to the relevant <code>transformers/</code> file.</p>
+<p>3. <strong>New output section or table?</strong> → Add a function to <code>formatters/markdown-formatter.js</code>.</p>
+<p>4. <strong>New Rovo action?</strong> → Add a resolver that calls the three layers above. No logic inside.</p>
+<p>5. <strong>New workflow status?</strong> → Edit <code>config/constants.js</code> only. Zero other changes needed.</p>
+<p>6. <strong>Never duplicate logic</strong> — if a second resolver needs the same extraction, transformation, or formatting, it imports from the existing layer file.</p>
+<p>7. <strong>Sprint extraction belongs in <code>sprint-extractor.js</code></strong> — never inline board discovery, sprint list fetching, or GreenHopper report loops in a resolver. Both the portfolio pipeline and individual sprint resolver call the same shared functions.</p>
+<p>8. <strong>Concurrency primitives belong in <code>utils/concurrency.js</code></strong> — never define <code>makeSemaphore</code> or a sequential delay loop inside a resolver.</p>
+<p>9. <strong>Confluence tables with unequal columns</strong> → use <code>buildCustomTable(headers, rows, colspans)</code> instead of a markdown pipe table. The <code>colspans</code> array gives explicit width ratios per column.</p>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>18. Data Flow (Portfolio Report)</h2>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[Rovo Event  (teamPage param drives phase)
+    │
+    ▼
+portfolio-report-resolver.js   ← entry/exit only
+    │
+    ├─ EXTRACT — Layer 1 (Objective + Initiatives) ──────────
+    │   searchJira()              ← services/jira-api-service.js
+    │   extractItem()             ← extractors/jira-extractor.js
+    │
+    ├─ EXTRACT — Layer 2 (Epics, optional QP filter) ────────
+    │   searchJira()              ← services/jira-api-service.js
+    │   extractItem()             ← extractors/jira-extractor.js
+    │
+    ├─ EXTRACT — Layer 3 (Story counts, chunked 50) ─────────
+    │   searchJira()              ← services/jira-api-service.js
+    │   extractStoryStatus()      ← extractors/jira-extractor.js
+    │   chunk()                   ← extractors/jira-extractor.js
+    │
+    ├─ EXTRACT — Layer 4 (Epic changelogs → lead time) ──────
+    │   searchJira(..., ['changelog']) ← services/jira-api-service.js
+    │   extractEpicForLeadTime()  ← extractors/jira-extractor.js
+    │
+    ├─ TRANSFORM ────────────────────────────────────────────
+    │   buildCountMap()           ← transformers/portfolio-transformer.js
+    │   groupByStatusOrdered()    ← transformers/portfolio-transformer.js
+    │   filterOverdue()           ← transformers/portfolio-transformer.js
+    │   calculateLeadTime()       ← transformers/portfolio-transformer.js
+    │   computeSprintTrends()     ← transformers/portfolio-transformer.js
+    │
+    ├─ LOAD ─────────────────────────────────────────────────
+    │   formatProgress()              ← formatters/markdown-formatter.js
+    │   formatStatusTable()           ← formatters/markdown-formatter.js
+    │   formatStoryStatusTable()      ← formatters/markdown-formatter.js
+    │   formatInitiativeTable()       ← formatters/markdown-formatter.js
+    │   formatEpicsByTeam()           ← formatters/markdown-formatter.js
+    │   formatInnovationVelocityTable()← formatters/markdown-formatter.js
+    │
+    ▼
+Structured response { status, summary, pagination, team_* fields, ... }]]></ac:plain-text-body>
+</ac:structured-macro>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>19. Pagination Model (Two-Phase Design)</h2>
+<p>Rovo's LLM output token limit (~4K per turn) prevents returning all team data in one response. The resolver solves this with a two-phase, server-controlled pagination model.</p>
+<h3>19.1. Phase 1 — Summary (<code>teamPage = 0</code>)</h3>
+<p>Returns the portfolio summary, initiative table, and counts. No team fields. Gives the LLM a "breathing room" turn before the heavier team breakdown begins.</p>
+<h3>19.2. Phase 2 — Team pages (<code>teamPage ≥ 1</code>)</h3>
+<p>Returns <strong>exactly one team</strong> per call. The server decides what the LLM must do next via a single <code>pagination.nextAction</code> field — no boolean logic required from the LLM.</p>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p><code>nextAction</code></p></th><th><p>Condition</p></th><th><p>LLM behaviour</p></th></tr><tr><td colspan="2"><p><code>"AUTO_CONTINUE"</code></p></td><td><p>Within a batch of 4 (<code>teamPage % 4 ≠ 0</code>)</p></td><td><p>Call again immediately — no text between table and call</p></td></tr><tr><td colspan="2"><p><code>"PAUSE"</code></p></td><td><p>Batch boundary (<code>teamPage % 4 === 0</code>) and more teams remain</p></td><td><p>Post the batch-pause message, wait for user "next"</p></td></tr><tr><td colspan="2"><p><code>"COMPLETE"</code></p></td><td><p>No more teams</p></td><td><p>Post the completion message</p></td></tr></tbody></table>
+<p><strong>Why batch at 4?</strong> Each team table costs ~300–500 LLM output tokens. Four teams ≈ 2,000 tokens — safely under the ~4K ceiling. Batching at the server prevents the LLM from chaining indefinitely and hitting a silent mid-report truncation.</p>
+<p><strong>Key pagination fields returned:</strong></p>
+<table data-layout="full-width"><colgroup><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Field</p></th><th><p>Purpose</p></th></tr><tr><td colspan="2"><p><code>nextAction</code></p></td><td><p>The only field the LLM reads to decide its next move</p></td></tr><tr><td colspan="2"><p><code>nextTeamPage</code></p></td><td><p>The exact integer to pass as <code>teamPage</code> in the next call</p></td></tr><tr><td colspan="2"><p><code>teamNumber</code></p></td><td><p>Display only — which team was just returned. <strong>Never used as a call parameter</strong></p></td></tr><tr><td colspan="2"><p><code>batchStartTeam</code></p></td><td><p>First team number of the current batch — for the pause message</p></td></tr><tr><td colspan="2"><p><code>totalTeams</code></p></td><td><p>Total teams in this objective — for progress display</p></td></tr></tbody></table>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>20. Layered Crawl (Forge 25-second limit)</h2>
+<p>The portfolio analysis fetches in three sequential layers to avoid large parallel fan-outs:</p>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Layer</p></th><th><p>What</p></th><th><p>JQL strategy</p></th><th><p>Scope</p></th></tr><tr><td colspan="2"><p>1</p></td><td><p>Portfolio root + direct children</p></td><td><p><code>key = X OR parent = X</code></p></td><td><p>Objective / Initiative / Epic</p></td></tr><tr><td colspan="2"><p>2</p></td><td><p>Epics (optional QP filter)</p></td><td><p><code>parent in (initiativeKeys...)</code></p></td><td><p>Objective only</p></td></tr><tr><td colspan="2"><p>3</p></td><td><p>Story counts</p></td><td><p><code>parent in (epicKeys...)</code> chunked in groups of 50</p></td><td><p>All scopes</p></td></tr><tr><td colspan="2"><p>4 (async)</p></td><td><p>Epic + Story changelogs for LCT</p></td><td><p><code>hierarchyLevel in (0,1) AND agileTeam in (...)</code></p></td><td><p>All scopes</p></td></tr></tbody></table>
+<p>Layer 3 uses <code>chunk()</code> to keep JQL <code>IN</code> clauses within character limits.</p>
+<p>Layer 4 runs in a separate Forge invocation chain (<code>lead-time-resolver</code>) to avoid the 25-second execution limit.</p>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>21. Image Rendering in Rovo Chat</h2>
+<p>Rovo's content security policy (CSP) aggressively blocks most external image embeds. The following table summarises what works and what doesn't:</p>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Method</p></th><th><p>Result</p></th><th><p>Notes</p></th></tr><tr><td colspan="2"><p><code>!<a href="external-url">alt</a></code> in prompt template</p></td><td><p>✅ Works (inconsistent)</p></td><td><p>Rovo renders imgur URLs inline when the LLM outputs them as conversational text via the prompt template</p></td></tr><tr><td colspan="2"><p><code>!<a href="url">alt</a></code> returned from action data</p></td><td><p>❌ Blocked</p></td><td><p>Rovo converts to a hyperlink or "Preview unavailable"</p></td></tr><tr><td colspan="2"><p>Raw URL from action data</p></td><td><p>❌ Blocked</p></td><td><p>Rovo auto-titles it as a link</p></td></tr><tr><td colspan="2"><p><code>manifest.yml</code> <code>icon</code> field</p></td><td><p>✅ Guaranteed</p></td><td><p>Shown as the agent's avatar bubble on every message</p></td></tr></tbody></table>
+<h3>21.1. How Gustiel handles images</h3>
+<p><strong>Agent avatar (<code>avatarImageUrl</code>)</strong> — rendered inline at the top of the identity card:</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[![Gustiel]({agent.avatarImageUrl})]]></ac:plain-text-body>
+</ac:structured-macro>
+<p><strong>Creator photo (<code>builtByImageUrl</code>)</strong> — rendered inline on the Built by line:</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[**Built by:** {agent.builtBy} · {agent.builtByEmail} · ![Gustiel]({agent.builtByImageUrl})]]></ac:plain-text-body>
+</ac:structured-macro>
+<p>Both URLs live in <code>GUSTIEL<em>CARD</code> inside <code>src/resolvers/creator-resolver.js</code>. The prompt template in <code>prompts/main</em>prompt.md</code> instructs the LLM to output them using <code>!<a href="url">alt</a></code> markdown syntax, which Rovo renders inline.</p>
+<p><strong>Manifest icon</strong> — the agent's avatar in the Rovo UI is set via <code>manifest.yml</code>:</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[modules:
+  rovo:agent:
+    - key: portfolio-analyst-agent
+      icon: resource:agent-assets;icons/avatar.png]]></ac:plain-text-body>
+</ac:structured-macro>
+<p>The image file is bundled at <code>assets/icons/avatar.png</code> and declared under <code>resources</code> as <code>agent-assets</code>. This is the only image Rovo is guaranteed to always display.</p>
+<h3>21.2. Rule: image URLs belong in <code>creator-resolver.js</code></h3>
+<p>Never hardcode image URLs directly in the prompt. Keep them in <code>GUSTIEL_CARD</code> so they can be updated in one place. The prompt references them via <code>{agent.avatarImageUrl}</code> and <code>{agent.builtByImageUrl}</code>.</p>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>22. Batched Accumulator Pattern</h2>
+<p>This is the core engineering innovation that makes Gustiel possible on Forge. Understanding it is essential for any feature that touches large datasets.</p>
+<h3>22.1. The Problem: Forge's 25-Second Execution Limit</h3>
+<p>Every Forge function invocation must complete within <strong>25 seconds</strong>. For a portfolio with 20+ teams and 1,000+ stories, querying Jira changelogs sequentially within a single invocation is impossible — each GreenHopper report fetch takes ~1–3 seconds, and changelog JQL with expansions for 400+ epics and stories takes 5–15 seconds alone.</p>
+<p>Forge has no built-in "continue this function later" mechanism. Each invocation is completely independent.</p>
+<h3>22.2. The Solution: Session-Based Resumable Processing</h3>
+<p>The Batched Accumulator Pattern breaks the work across <strong>multiple sequential Forge invocations</strong>, using Forge Storage as the shared state between them.</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[Invocation 1: process items 0–N, save progress to Storage, return PARTIAL
+Invocation 2: read progress, process items N+1–M, save progress, return PARTIAL
+...
+Invocation K: process final items, save completed result, return SUCCESS]]></ac:plain-text-body>
+</ac:structured-macro>
+<p>Each invocation:</p>
+<p>1. Reads the current accumulator and <code>startIndex</code> from Forge Storage</p>
+<p>2. Processes a fixed-size batch (e.g. 6 teams per invocation)</p>
+<p>3. Merges results into the accumulator</p>
+<p>4. Writes the updated accumulator + new <code>startIndex</code> back to Storage</p>
+<p>5. Returns <code>{ status: "PARTIAL" }</code> if more work remains, <code>{ status: "SUCCESS" }</code> when done</p>
+<p>Rovo's prompt loop drives the continuation: on <code>PARTIAL</code>, the prompt instructs Rovo to call the same resolver again immediately (no user input needed). The loop continues until <code>SUCCESS</code>.</p>
+<h3>22.3. Session State Machine</h3>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[[NOT PRESENT]
+     │ prepare-portfolio-export called (Step 1)
+     ▼
+[phase: "layers_1_4"]   ← extraction done; LCT pending
+     │ calculate-lead-time-data loops until done (Step 2)
+     ▼
+[phase: "complete"]     ← LCT data present; sprint data pending
+     │ calculate-sprint-data loops until done (Step 3)
+     ▼
+[phase: "complete"]     ← session has allTeams + lctByTeam + sprintsByTeam
+     │ export-to-confluence (Step 4) reads session, builds page
+     ▼
+[Confluence page created / updated]]]></ac:plain-text-body>
+</ac:structured-macro>
+<h3>22.4. Batch Sizes (configured in <code>constants.js</code>)</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Resolver</p></th><th><p>Batch constant</p></th><th><p>Default</p></th><th><p>What one batch processes</p></th></tr><tr><td colspan="2"><p><code>lead-time-resolver.js</code></p></td><td><p><code>ANALYSIS<em>LCT</em>BATCH_SIZE</code></p></td><td><p>100 issues</p></td><td><p>Issues per changelog JQL call</p></td></tr><tr><td colspan="2"><p><code>sprint-data-resolver.js</code></p></td><td><p><code>ANALYSIS<em>SPRINT</em>TEAMS<em>PER</em>BATCH</code></p></td><td><p>6 teams</p></td><td><p>Teams per GreenHopper fetch invocation</p></td></tr></tbody></table>
+<h3>22.5. Idempotency</h3>
+<p>Resolvers check for existing session data before starting work:</p>
+<ul><li>If a complete session already exists <strong>and</strong> the user did not say "fresh", "redo", or "overwrite" → return the cached result immediately without any Jira API calls.</li><li>If the session is in <code>PARTIAL</code> state (interrupted mid-batch) → resume from <code>startIndex</code>.</li><li>If no session exists → start fresh from the beginning.</li></ul>
+<p>This makes retries safe and avoids redundant API calls after turn-limit pauses.</p>
+<h3>22.6. Turn-Limit Pause Protocol</h3>
+<p>Rovo has a per-turn tool-call budget. When processing 5+ portfolio keys, extraction and LCT may exhaust this budget mid-way through. The prompt handles this with an explicit pause protocol:</p>
+<ul><li>On each ETL phase (extract, LCT, sprint), if the budget is exhausted before all keys finish, Rovo posts a pause message listing the remaining pending keys and asks the user to reply "continue".</li><li>On resume, Rovo picks up from the first incomplete key and continues without re-running completed keys (session idempotency prevents double-work).</li><li>A mandatory pre-export guard in Step E verifies all three ETL phases are complete for every key before calling <code>export-to-confluence</code>. If any step is missing, Rovo goes back and runs it.</li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>23. Confluence Export — The Full Pipeline</h2>
+<p>This section documents what <code>confluence-export-resolver.js</code> does end-to-end, from receiving a Rovo action call to delivering a Confluence page URL.</p>
+<h3>23.1. Page Assembly Order</h3>
+<p>Every exported page is assembled in this exact order before the API write:</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[1. Anchor macro          [ac:structured-macro name="anchor"] (anchorName="top")
+2. TOC macro             [ac:structured-macro name="toc"]    (H1–H3, style=none)
+3. Report body           markdownToStorage(markdown)]]></ac:plain-text-body>
+</ac:structured-macro>
+<p>The anchor macro at position 1 is what the <code><a href="#top">⬆ Back to top</a></code> links throughout the report jump to. It is always the first element so links work regardless of section depth. The TOC macro at position 2 auto-scans all headings on the rendered page and produces clickable anchor links — no manual maintenance required.</p>
+<h3>23.2. markdownToStorage — The Conversion Pipeline</h3>
+<p><code>markdownToStorage(markdown)</code> in <code>confluence-formatter.js</code> converts the Markdown produced by <code>markdown-formatter.js</code> into Confluence storage format (XHTML). It processes the string line-by-line and handles:</p>
+<table data-layout="full-width"><colgroup><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Markdown construct</p></th><th><p>Confluence output</p></th></tr><tr><td colspan="2"><p><code># H1</code></p></td><td><p><code>&lt;h1&gt;</code></p></td></tr><tr><td colspan="2"><p><code>## H2</code></p></td><td><p><code>&lt;h2&gt;N. Title&lt;/h2&gt;</code> (auto-numbered) + auto-inject back-to-top before every H2 except the first</p></td></tr><tr><td colspan="2"><p><code>### H3</code></p></td><td><p><code>&lt;h3&gt;N.M. Title&lt;/h3&gt;</code> (auto-numbered within H2)</p></td></tr><tr><td colspan="2"><p><code>#### H4</code></p></td><td><p><code>&lt;h4&gt;N.M.P. Title&lt;/h4&gt;</code></p></td></tr><tr><td colspan="2"><p><code>---</code></p></td><td><p><code>&lt;hr/&gt;</code></p></td></tr><tr><td colspan="2"><p><code>&gt; blockquote</code></p></td><td><p><code>&lt;blockquote&gt;</code> (consecutive <code>&gt; </code> lines merged into one block)</p></td></tr><tr><td colspan="2"><p><code>- item</code> / <code>* item</code></p></td><td><p><code>&lt;ul&gt;&lt;li&gt;…&lt;/li&gt;&lt;/ul&gt;</code> (consecutive items merged into one list; no inner <code>&lt;p&gt;</code> to preserve bullet styling)</p></td></tr><tr><td colspan="2"><p>`\</p></td><td><p>table \</p></td><td><p>`</p></td><td><p><code>renderTable(headers, bodyRows)</code> — full Confluence XHTML table</p></td></tr><tr><td colspan="2"><p><code><a href="#top">⬆ Back to top</a></code></p></td><td><p>Right-aligned <code>&lt;p style="text-align:right;"&gt;&lt;a href="#top"&gt;</code></p></td></tr><tr><td colspan="2"><p><code><strong>bold</strong></code></p></td><td><p><code>&lt;strong&gt;</code></p></td></tr><tr><td colspan="2"><p><code><a href="url">link</a></code></p></td><td><p><code>&lt;a href="…"&gt;</code></p></td></tr><tr><td colspan="2"><p><code><em>italic</em></code></p></td><td><p><code>&lt;em&gt;</code></p></td></tr><tr><td colspan="2"><p>`<code> </code>code<code> </code>`</p></td><td><p><code>&lt;code&gt;</code></p></td></tr><tr><td colspan="2"><p>Plain text</p></td><td><p><code>&lt;p&gt;</code></p></td></tr></tbody></table>
+<h3>23.3. Table Rendering (<code>renderTable</code>)</h3>
+<p>All Markdown pipe tables are rendered via <code>renderTable(headers, bodyRows)</code> which produces a full-width Confluence XHTML table with auto-calculated <code>colspan</code> widths:</p>
+<ul><li><strong>Virtual column strategy</strong>: a <code>&lt;colgroup&gt;</code> with <code>(n + wideCount)</code> equal-width phantom columns is written. Each wide column spans 2 virtual columns (rendered at ~2× width); other columns span 1.</li><li><strong>First column</strong> is always wide — it holds the issue key / name and needs extra space.</li><li><strong><code>WIDE_HEADERS</code></strong> (<code>Start</code>, <code>Due</code>) are also given <code>colspan="2"</code> — these cells contain multi-line date content (planned + actual date on separate <code>&lt;p&gt;</code> rows via the <code>↵</code> sentinel).</li><li><strong>Status cell colouring</strong>: <code>tdStyle(content)</code> checks if a cell exactly matches a status name in <code>STATUS_BG</code>. If yes, it adds <code>data-highlight-colour="&lt;named-colour&gt;"</code>. Named Confluence colours (<code>light-grey</code>, <code>light-blue</code>, <code>light-green</code>) adapt to the user's theme (light / dark mode). Hex codes do not — avoid them.</li><li><strong><code>buildCustomTable</code></strong>: when <code>renderTable</code>'s auto-colspan is not right (e.g. a 1-col label beside a 3-col description), use <code>buildCustomTable(headers, rows, colspans)</code> with explicit per-column width ratios. Used by <code>skill-docs-resolver.js</code> for the ETL and hierarchy tables.</li></ul>
+<h3>23.4. Scope-Aware Section Rendering</h3>
+<p>The same export resolver handles three key types without separate resolvers:</p>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Scope</p></th><th><p>Detected by</p></th><th><p>Sections rendered</p></th></tr><tr><td colspan="2"><p><strong>Objective</strong></p></td><td><p><code>issuetype.name === "Objective"</code></p></td><td><p>All 9 sections (full report)</p></td></tr><tr><td colspan="2"><p><strong>Initiative</strong></p></td><td><p><code>issuetype.name === "Initiative"</code></p></td><td><p>Epic summary, Epics by Team, Innovation Velocity, LCT, Sprint Analysis</p></td></tr><tr><td colspan="2"><p><strong>Epic</strong></p></td><td><p><code>issuetype.hierarchyLevel === 1</code></p></td><td><p>Story status table, Innovation Velocity (1 team), LCT, Sprint Analysis</p></td></tr></tbody></table>
+<p>Scope is detected by calling <code>extractItemScope(issue)</code> on the key itself (a 1-item JQL fetch at the start of <code>buildReportForKey</code>). The result gates which code path runs.</p>
+<h3>23.5. Multi-Key Modes</h3>
+<p>When the user provides multiple portfolio keys, the export resolver supports three modes:</p>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Mode</p></th><th><p><code>portfolioKeys</code> value</p></th><th><p><code>mode</code> param</p></th><th><p>Calls</p></th><th><p>Result</p></th></tr><tr><td colspan="2"><p><strong>Isolated</strong></p></td><td><p><code>"WX-1145,WX-1770,…"</code> (all keys)</p></td><td><p><code>"isolated"</code></p></td><td><p>1 total</p></td><td><p>One page; each key in its own <code># KEY — Title</code> section with <code>---</code> dividers</p></td></tr><tr><td colspan="2"><p><strong>Merged</strong></p></td><td><p><code>"WX-1145,WX-1770,…"</code> (all keys)</p></td><td><p><code>"merged"</code></p></td><td><p>1 total</p></td><td><p>One page; all keys' data pooled (teams merged, tables combined)</p></td></tr><tr><td colspan="2"><p><strong>Individual</strong></p></td><td><p><code>"WX-1145"</code> (one key at a time)</p></td><td><p>*(omit)*</p></td><td><p>1 per key</p></td><td><p>Separate page per key</p></td></tr></tbody></table>
+<p>Both Isolated and Merged are <strong>single-call, single-page</strong> operations — the resolver builds the entire multi-key page internally. Never loop over keys and call export multiple times for these modes.</p>
+<h3>23.6. Upsert Logic (Find → Update → Move → Create)</h3>
+<p>Every export call attempts to upsert (not blindly create) to avoid duplicate pages:</p>
+<p>1. <strong>Find by title</strong> — search the target space for a page with the exact title.</p>
+<p>2. <strong>Update in place</strong> — if found in the right location, update its body.</p>
+<p>3. <strong>Move + update</strong> — if found at a different location (user changed the folder), move it then update.</p>
+<p>4. <strong>Create</strong> — if not found anywhere, create a new page at the target location.</p>
+<p>Destination is resolved in this priority order:</p>
+<ul><li><code>folderId</code> (explicit Confluence page/folder ID or URL)</li><li><code>parentPath</code> (slash-separated page title path, e.g. <code>"Portfolio Reports/WX"</code>)</li><li>Space root (if neither is provided)</li></ul>
+<p>The page title always includes the current date in <code>REPORT_TIMEZONE</code> (BRT) for traceability. An optional <code>titleSuffix</code> field prevents page overwrites when multiple individual keys share the same destination folder.</p>
+<h3>23.7. Report Metadata</h3>
+<p>Each page includes:</p>
+<ul><li><code><em>Created at: YYYY-MM-DD HH:MM</em></code> — rendered as italic text at the top of the body, in <code>REPORT_TIMEZONE</code></li><li><code><a href="#top">⬆ Back to top</a></code> — right-aligned link after the last section (and auto-injected before every H2 by <code>markdownToStorage</code>)</li><li><code>data-layout="full-width"</code> on every table — ensures tables use the full page width, not the default content column width</li></ul>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>24. Storage Architecture</h2>
+<h3>24.1. Storage Backend</h3>
+<p>Gustiel uses <strong><code>@forge/api</code> storage</strong> — Atlassian's legacy Forge KV (Key-Value) module. It stores data as plain JSON objects keyed by string. There are no tables, no queries by field value, and no native TTL.</p>
+<blockquote><p>⚠️ <strong>Do not attempt to pass a third <code>{ ttl: ... }</code> argument to <code>storage.set()</code>.</strong></p><p>The legacy <code>@forge/api</code> storage module does not support TTL options — passing a third argument silently fails the write, breaking the entire session. TTL is only available in <code>@forge/kvs</code> (the newer module). A migration to <code>@forge/kvs</code> would unlock native per-key expiry.</p></blockquote>
+<h3>24.2. Key Format</h3>
+<p>All session keys follow the canonical format defined in <code>makeSessionKey()</code> (<code>src/config/constants.js</code>):</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[export_session:<accountId>:<portfolioKey>]]></ac:plain-text-body>
+</ac:structured-macro>
+<p>Example: <code>export_session:557058:abc123ef-xxxx:WX-1770</code></p>
+<p>Every resolver that reads or writes sessions <strong>must</strong> call <code>makeSessionKey()</code> — never construct the key string manually. This ensures the security boundary (prefix-based access control) is consistently enforced.</p>
+<h3>24.3. Session Lifecycle</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Phase</p></th><th><p>Trigger</p></th><th><p>Key state</p></th></tr><tr><td colspan="2"><p><strong>Created</strong></p></td><td><p><code>prepare-portfolio-export</code> completes Step 1</p></td><td><p><code>{ phase: "layers<em>1</em>4", allTeams, allEpics, allStories, timestamp }</code></p></td></tr><tr><td colspan="2"><p><strong>LCT added</strong></p></td><td><p><code>calculate-lead-time-data</code> completes Step 2</p></td><td><p><code>{ phase: "complete", lctByTeam, velocityByTeam, overallVelocity, ... }</code></p></td></tr><tr><td colspan="2"><p><strong>Sprint added</strong></p></td><td><p><code>calculate-sprint-data</code> completes Step 3</p></td><td><p><code>{ phase: "complete", sprintsByTeam, ... }</code></p></td></tr><tr><td colspan="2"><p><strong>Read</strong></p></td><td><p><code>export-to-confluence</code> / <code>analyze-portfolio-chat</code></p></td><td><p>Data is read; key is not modified</p></td></tr><tr><td colspan="2"><p><strong>Deleted</strong></p></td><td><p>User calls <code>wipe-user-storage</code> or admin calls <code>wipe-global-storage</code></p></td><td><p>Key removed from storage</p></td></tr><tr><td colspan="2"><p><strong>Expired</strong></p></td><td><p>App uninstalled</p></td><td><p>Atlassian retains data for 60 days, then deletes</p></td></tr></tbody></table>
+<h3>24.4. Data Lifetime</h3>
+<p>Without explicit deletion, sessions persist indefinitely. There is no automatic cleanup. Two approaches exist for manual cleanup:</p>
+<p>1. <strong><code>wipe-user-storage</code></strong> — each user can delete their own sessions (all keys matching their <code>accountId</code> prefix)</p>
+<p>2. <strong><code>wipe-global-storage</code></strong> — admin wipes all sessions for all users</p>
+<p>The <code>timestamp</code> field on every session enables a future scheduled-trigger cleanup (weekly scan, delete entries older than N days) if needed.</p>
+<h3>24.5. Storage Capacity</h3>
+<p>Forge Storage has a per-item size limit (approx. 500 KB per key). Large portfolios with many epics and stories can approach this. If a session is ever rejected, reduce the data stored per key (e.g. store only team-aggregated stats instead of raw issue arrays).</p>
+<p style="text-align: right;"><a href="#top">⬆ Back to top</a></p>
+<hr/>
+<h2>25. Admin System</h2>
+<h3>25.1. Two-Tier Access Model</h3>
+<p>Gustiel uses a two-tier model: a <strong>static super-admin</strong> (hardcoded in <code>src/config/constants.js</code> → <code>SUPER<em>ADMIN</em>ACCOUNT_ID</code>) and a <strong>dynamic admin registry</strong> (a dedicated Forge Storage key). Both tiers have full admin access. Only the super-admin can add other admins.</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">none</ac:parameter>
+  <ac:plain-text-body><![CDATA[SUPER_ADMIN_ACCOUNT_ID (constants.js)   ← permanent, cannot be removed
+Admin registry (Forge Storage)          ← dynamic, managed at runtime via Rovo]]></ac:plain-text-body>
+</ac:structured-macro>
+<h3>25.2. Security Boundary</h3>
+<p>Every action in <code>storage-admin-resolver.js</code> runs an admin check at the top before any other work. Non-admin requests are rejected with an explicit error message. The security boundary for non-admins is enforced via prefix filtering:</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1">
+  <ac:parameter ac:name="language">javascript</ac:parameter>
+  <ac:plain-text-body><![CDATA[// Non-admin: can only see keys that start with their own accountId
+startsWith(`export_session:${accountId}:`)]]></ac:plain-text-body>
+</ac:structured-macro>
+<p>An admin bypasses this filter and can read or delete any key in storage.</p>
+<h3>25.3. Admin Actions</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Action</p></th><th><p>Who</p></th><th><p>What it does</p></th></tr><tr><td colspan="2"><p><code>inspect-storage</code> (no key)</p></td><td><p>Admin</p></td><td><p>Lists all keys across all users</p></td></tr><tr><td colspan="2"><p><code>inspect-storage</code> (with key)</p></td><td><p>Admin</p></td><td><p>Reads any key verbatim (displayed as human-readable summary, never raw JSON)</p></td></tr><tr><td colspan="2"><p><code>wipe-global-storage</code></p></td><td><p>Admin</p></td><td><p>Deletes ALL session data for ALL users (requires <code>confirm = "YES"</code>)</p></td></tr><tr><td colspan="2"><p><code>list-admins</code></p></td><td><p>Admin</p></td><td><p>Lists super-admin + all dynamic admins (name + email)</p></td></tr><tr><td colspan="2"><p><code>add-admin</code></p></td><td><p>Super-admin only</p></td><td><p>Grants admin access to a user by <code>accountId</code></p></td></tr><tr><td colspan="2"><p><code>remove-admin</code></p></td><td><p>Admin</p></td><td><p>Removes a dynamic admin (cannot remove super-admin)</p></td></tr><tr><td colspan="2"><p><code>clear-admin-registry</code></p></td><td><p>Admin</p></td><td><p>Resets dynamic admin list to empty (super-admin unaffected)</p></td></tr></tbody></table>
+<h3>25.4. Non-Admin (Self-Service) Actions</h3>
+<table data-layout="full-width"><colgroup><col /><col /><col /><col /></colgroup><tbody><tr><th colspan="2"><p>Action</p></th><th><p>Who</p></th><th><p>What it does</p></th></tr><tr><td colspan="2"><p><code>inspect-storage</code> (no key)</p></td><td><p>User</p></td><td><p>Lists only their own <code>export_session:&lt;accountId&gt;:*</code> keys</p></td></tr><tr><td colspan="2"><p><code>inspect-storage</code> (with key)</p></td><td><p>User</p></td><td><p>Reads their own key if it starts with their prefix</p></td></tr><tr><td colspan="2"><p><code>wipe-user-storage</code></p></td><td><p>User</p></td><td><p>Deletes all their own sessions (requires <code>confirm = "YES"</code>)</p></td></tr></tbody></table>
+<h3>25.5. Admin Registry Storage</h3>
+<p>The admin registry is stored as a single Forge Storage key (separate from portfolio sessions). Its format is a plain JSON object: <code>{ admins: [{ accountId, displayName, email }, ...] }</code>. It is never included in the <code>wipe-global-storage</code> operation — only portfolio session keys are wiped.</p>
