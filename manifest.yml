@@ -28,7 +28,6 @@ modules:
         - list-admins
         - clear-admin-registry
         - get-my-account-id
-        - analyze-portfolio-chat
         - get-team-sprint-analysis
         - export-skill-docs
 
@@ -67,8 +66,6 @@ modules:
       handler: index.getMyAccountId
     - key: inspectStorage
       handler: index.inspectStorage
-    - key: chatAnalysisSection
-      handler: index.chatAnalysisSection
     - key: getTeamSprintAnalysis
       handler: index.getTeamSprintAnalysis
     - key: exportSkillDocs
@@ -424,37 +421,7 @@ modules:
             Takes precedence over parentPath when provided.
           required: false
 
-    - key: analyze-portfolio-chat
-      function: chatAnalysisSection
-      name: Analyze Portfolio in Chat
-      actionVerb: GET
-      description: >-
-        Delivers one paginated section of the portfolio analysis in chat.
-        Reads LCT, velocity, and story data from the per-user session cache.
-        Never re-runs extraction. Call once per NEXT confirmation.
-        Sections: summary, epic_teams, velocity_lct.
-      inputs:
-        portfolioKey:
-          title: Portfolio Key
-          type: string
-          description: The Jira key of the Objective, Initiative, or Epic to analyze (e.g. WX-1145).
-          required: true
-        section:
-          title: Section
-          type: string
-          description: >-
-            Which section to deliver: "summary" (first call), "epic_teams"
-            (epics by team, paginated), or "velocity_lct" (velocity + LCT,
-            paginated). Follow nextSection from the previous response.
-          required: false
-        teamOffset:
-          title: Team Offset
-          type: string
-          description: >-
-            Zero-based index of the first team to include in this batch.
-            Use 0 for the first call of a section; use nextTeamOffset from
-            the previous response for subsequent NEXT calls.
-          required: false
+
 
 
 resources:

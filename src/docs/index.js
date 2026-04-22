@@ -1,5 +1,5 @@
 // AUTO-GENERATED — do not edit manually.
-// Generated: 2026-04-22T01:19:05.207Z
+// Generated: 2026-04-22T01:36:39.372Z
 // Source:    docs/  —  run ".\deploy.ps1 --docs" to regenerate.
 // Imported by skill-docs-resolver.js to build the Confluence skill docs page.
 
