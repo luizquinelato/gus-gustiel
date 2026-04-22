@@ -642,6 +642,8 @@ Call `export-team-sprint` or `export-team-lead-time` with:
 
 Where `[action]` is `"moved and updated"`, `"updated"`, or `"exported"`.
 
+⚠️ **Stop here. Do NOT add any summary, interpretation, analysis, or recommendations after the confirmation message.** The page contains the full data — the user will read it there. Do not infer metrics or patterns from the response payload.
+
 **On `status === "ERROR"`:**
 > *"❌ Export failed: [message]"*
 
