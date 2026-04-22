@@ -104,7 +104,7 @@ export const exportTeamSprint = async (event) => {
         const teamLabel = titleSuffix || teams.join(', ');
         const pageTitle = `🏃 [${today}] Sprint Analysis — ${teamLabel}${byClause}`;
 
-        const sprintSection = formatSprintSection(teams, sprintsByTeam, trendsByTeam);
+        const sprintSection = formatSprintSection(teams, sprintsByTeam, trendsByTeam, true);
         const fullMarkdown  = `# 🏃 Sprint Analysis — ${teamLabel}\n\n${sprintSection}`;
 
         const storageBody = buildPageStorageBody(fullMarkdown);

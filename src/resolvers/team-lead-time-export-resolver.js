@@ -86,8 +86,8 @@ export const exportTeamLeadTime = async (event) => {
         const teamLabel = titleSuffix || teams.join(', ');
         const pageTitle = `⏱️ [${today}] Lead Time / Cycle Time — ${teamLabel}${byClause}`;
 
-        // renderHeading=true renders the ## H2 heading and legend
-        const lctSection   = formatLCTSection(teams, teamStats, true, true);
+        // standalone=true: section heading = H2, teams = H3 (H1 is the page title)
+        const lctSection   = formatLCTSection(teams, teamStats, true, true, true);
         const fullMarkdown = `# ⏱️ Lead Time / Cycle Time — ${teamLabel}\n\n${lctSection}`;
 
         const storageBody = buildPageStorageBody(fullMarkdown);

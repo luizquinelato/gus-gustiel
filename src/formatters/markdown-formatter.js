@@ -470,15 +470,18 @@ export function formatInnovationVelocityByTeam(allTeams, teamStats, lctReady = f
  *                                   Pass false when the caller provides its own ## heading.
  * @returns {string} Markdown string
  */
-export function formatLCTSection(allTeams, teamStats, lctReady = false, renderHeading = true) {
+export function formatLCTSection(allTeams, teamStats, lctReady = false, renderHeading = true, standalone = false) {
     const lines = [];
     const anyLctData = allTeams.some(t => {
         const lct = (teamStats[t] || {}).lct;
         return lct && lct.byType && Object.keys(lct.byType).length > 0;
     });
 
-    if (renderHeading) {
-        lines.push('### ⏱️ Lead / Cycle Time by Issue Type');
+    // Standalone export: H1 is page title → section = H2, teams = H3.
+    // Portfolio chat (renderHeading=true): section = H3, teams = H4.
+    // Portfolio Confluence (renderHeading=false): no section, teams = H3.
+    if (standalone || renderHeading) {
+        lines.push(standalone ? '## ⏱️ Lead / Cycle Time by Issue Type' : '### ⏱️ Lead / Cycle Time by Issue Type');
         lines.push('');
     }
 
@@ -488,19 +491,22 @@ export function formatLCTSection(allTeams, teamStats, lctReady = false, renderHe
     lines.push('');
 
     if (!anyLctData) {
-        // When renderHeading=false we're inside a Confluence ## H2 section —
+        // When renderHeading=false (and not standalone) we're inside a portfolio ## H2 —
         // the caller already emitted a ⚠️ banner, so stay silent here.
-        if (renderHeading) {
+        if (standalone || renderHeading) {
             lines.push(lctReady
                 ? '_No qualifying completed items found in the last 6 months._'
                 : '_Lead/Cycle Time data is not yet available._');
         }
     } else {
+        // Team heading level:
+        //   standalone=true          → ### (H3, sits under ## section)
+        //   standalone=false, renderHeading=true  → #### (H4, sits under ### portfolio section)
+        //   standalone=false, renderHeading=false → ### (H3, sits under ## portfolio section)
+        const teamH = standalone ? '###' : (renderHeading ? '####' : '###');
         for (const team of allTeams) {
             const lct = (teamStats[team] || {}).lct;
-            // When renderHeading=false the caller already provides ## H2 —
-            // use ### so Confluence numbers teams as 5.1, 5.2, … instead of 5.0.1, 5.0.2, …
-            lines.push(renderHeading ? `#### ${team}` : `### ${team}`);
+            lines.push(`${teamH} ${team}`);
             if (!lct || !lct.byType || Object.keys(lct.byType).length === 0) {
                 lines.push('_No qualifying completed items found in the last 6 months._');
                 lines.push('');
@@ -547,7 +553,7 @@ export function formatLCTSection(allTeams, teamStats, lctReady = false, renderHe
  * @param {Object}   sprintsByTeam  - { [team]: { boardId, boardName, sprints[], error?, warning? } }
  * @returns {string}                - Markdown string for the full section body
  */
-export function formatSprintSection(allTeams, sprintsByTeam, trendsByTeam = null) {
+export function formatSprintSection(allTeams, sprintsByTeam, trendsByTeam = null, standalone = false) {
     if (!sprintsByTeam || Object.keys(sprintsByTeam).length === 0) {
         return '> ⚠️ **Sprint data not available.** Run `calculate-sprint-data` after `calculate-lead-time-data` to populate this section.';
     }
@@ -571,14 +577,18 @@ export function formatSprintSection(allTeams, sprintsByTeam, trendsByTeam = null
         return `| ${s.name} | ${spCell(s.planned, s.plannedNoSp)} | ${spCell(s.added, s.addedNoSp)} | ${spCell(s.removed, s.removedNoSp)} | **${spCell(s.completed, s.velocityNoSp)}** | ${spCell(s.rolledOver, s.rolledOverNoSp)} | ${sd} |`;
     };
 
+    // Standalone export: H1 is page title → teams = H2, trend sub-sections = H3.
+    // Portfolio: teams = H3, trend sub-sections = H4.
+    const teamH = standalone ? '##' : '###';
+
     const sections = [];
 
     for (const team of allTeams) {
         const data = sprintsByTeam[team];
-        if (!data) { sections.push(`### ${team}\n> _No sprint data collected for this team._\n\n---\n`); continue; }
-        if (data.error) { sections.push(`### ${team}\n> ⚠️ ${data.error}\n\n---\n`); continue; }
+        if (!data) { sections.push(`${teamH} ${team}\n> _No sprint data collected for this team._\n\n---\n`); continue; }
+        if (data.error) { sections.push(`${teamH} ${team}\n> ⚠️ ${data.error}\n\n---\n`); continue; }
 
-        const header = `### ${team} — ${data.boardName}`;
+        const header = `${teamH} ${team} — ${data.boardName}`;
 
         if (!data.sprints || data.sprints.length === 0) {
             sections.push([header, `> ℹ️ ${data.warning || 'No closed sprints found in the last 6 months.'}`, '', '---', ''].join('\n'));
@@ -622,7 +632,7 @@ export function formatSprintSection(allTeams, sprintsByTeam, trendsByTeam = null
             }
         }
 
-        const trendSections = formatSprintTrendSections(trendsByTeam?.[team] ?? null);
+        const trendSections = formatSprintTrendSections(trendsByTeam?.[team] ?? null, standalone);
         const trendNote = !trendSections && validSprints.length > 0 && validSprints.length < 5
             ? `\n> ℹ️ *Trend analysis requires at least 5 closed sprints. ${validSprints.length} found — collect more data to unlock Velocity Trend, Scope Management, and Predictability Score.*`
             : '';
@@ -678,16 +688,19 @@ export function formatTeamEfficiencyTable(allTeams, teamStats) {
 // object returned by computeSprintTrends(). Used by both chat and Confluence
 // export formatters so the logic is never duplicated.
 // ─────────────────────────────────────────────────────────────────────────────
-function formatSprintTrendSections(trendData) {
+function formatSprintTrendSections(trendData, standalone = false) {
     if (!trendData) return '';
 
     const { velocity, scope, carryOver, predictability, sprintCount } = trendData;
 
     const dirArrow = velocity.direction === 'UP' ? ' ⬆️' : velocity.direction === 'DOWN' ? ' ⬇️' : '';
 
+    // Standalone: team is H2, trend sub-sections are H3. Portfolio: team is H3, sub-sections are H4.
+    const trendH = standalone ? '###' : '####';
+
     const lines = [
         '',
-        '#### 📈 Velocity Trend',
+        `${trendH} 📈 Velocity Trend`,
         '> *Measures how consistent and stable the team\'s delivery rate is over time. '
         + 'A stable velocity makes forecasting reliable; high variation signals unpredictability.*',
         '',
@@ -698,7 +711,7 @@ function formatSprintTrendSections(trendData) {
         `| Variation (CV) | ${velocity.stabilityRag} ${velocity.cv}% |`,
         `| Direction | ${velocity.stabilityRag}${dirArrow} avg first-3: ${velocity.avgFirst3} SP → avg last-3: ${velocity.avgLast3} SP |`,
         '',
-        '#### 🔀 Scope Management',
+        `${trendH} 🔀 Scope Management`,
         '> *Tracks how much the sprint scope changed after it started. '
         + 'Low churn (≤20%) means the team commits to a plan and sticks to it. '
         + 'Addition completion rate shows whether added work is actually finished or becomes carry-over.*',
@@ -711,7 +724,7 @@ function formatSprintTrendSections(trendData) {
             : `| Additions completed | — *(no mid-sprint additions recorded)* |`,
         `| Avg carry-over | ${carryOver.rag} ${carryOver.avgPct}% of planned SP rolled to next sprint |`,
         '',
-        '#### 🎯 Predictability Score',
+        `${trendH} 🎯 Predictability Score`,
         '> *Combines velocity stability, carry-over rate, and scope churn into a single score. '
         + '🟢 = 2 pts · 🟡 = 1 pt · 🔴 = 0 pts · max = 6 pts. '
         + 'High ≤20% behind ideal · Medium 20–50% · Low >50%.*',
