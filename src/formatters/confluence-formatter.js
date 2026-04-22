@@ -386,11 +386,16 @@ export function markdownToStorage(markdown) {
             i++; // skip closing fence
             const codeContent = codeLines.join('\n');
             const langParam   = `\n  <ac:parameter ac:name="language">${lang}</ac:parameter>`;
-            // CDATA safely wraps any special chars; ]]> cannot appear inside CDATA — acceptable
-            // for documentation code blocks.
+            // Escape sequences that Confluence's validator misinterprets even inside CDATA:
+            //   1. ]]>  → split CDATA to prevent premature closure
+            //   2. <ac: / </ac: → split CDATA and emit as HTML entity so the validator
+            //      doesn't count them as real (unclosed) macro elements
+            const safeCdata = codeContent
+                .replace(/\]\]>/g,  ']]]]><![CDATA[>')
+                .replace(/<(\/?)ac:/g, ']]>&lt;$1ac:<![CDATA[');
             html.push(
                 `<ac:structured-macro ac:name="code" ac:schema-version="1">${langParam}\n` +
-                `  <ac:plain-text-body><![CDATA[${codeContent}]]></ac:plain-text-body>\n` +
+                `  <ac:plain-text-body><![CDATA[${safeCdata}]]></ac:plain-text-body>\n` +
                 `</ac:structured-macro>`
             );
             continue;

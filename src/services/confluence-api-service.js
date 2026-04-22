@@ -336,8 +336,10 @@ export async function uploadAttachment(pageId, filename, base64Data, mimeType = 
     const formData = new FormData();
     formData.append('file', blob, filename);
 
+    // v1 REST API is the documented multipart upload path for attachments.
+    // The v2 endpoint does not reliably resolve ri:attachment references in the Fabric editor.
     const response = await asApp().requestConfluence(
-        route`/wiki/api/v2/pages/${pageId}/attachments`,
+        route`/wiki/rest/api/content/${pageId}/child/attachment`,
         {
             method:  'POST',
             headers: { 'X-Atlassian-Token': 'nocheck' },
