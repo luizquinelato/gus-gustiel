@@ -16,9 +16,9 @@
 
 import { storage }                                                                      from '@forge/api';
 import { getEnvFromJira, searchJira, getUserEmail, getCurrentAccountId }                  from '../services/jira-api-service.js';
-import { getSpaceByKey, findPageByTitle, createConfluencePage,
-         updateConfluencePage, createFolder, findFolderByTitle,
-         findOrCreatePageByPath }                                                   from '../services/confluence-api-service.js';
+import { resolveDestination, buildPageStorageBody,
+         upsertPage as upsertConfluencePage }                                       from '../services/confluence-page-service.js';
+import { getSpaceByKey, findFolderByTitle, createFolder }                           from '../services/confluence-api-service.js';
 import { PORTFOLIO_WORKFLOWS, REPORT_TIMEZONE,
          makeSessionKey }                                    from '../config/constants.js';
 import { extractItem, extractStoryStatus, chunk,
@@ -31,8 +31,7 @@ import { formatProgress, formatStatusTable,
          formatInnovationVelocityByTeam, formatLCTSection,
          formatSprintSection,
          EPIC_RYG_LEGEND }                                   from '../formatters/markdown-formatter.js';
-import { markdownToStorage, buildTocMacro,
-         buildAnchorMacro }                                   from '../formatters/confluence-formatter.js';
+
 
 // ── Private helper — builds a trendsByTeam map from sprintsByTeam ─────────────
 // Resolver is thin: just maps computeSprintTrends() across all teams.
@@ -831,93 +830,13 @@ export const exportToConfluence = async (event) => {
 
     // ── LOAD — Convert to Confluence storage format, then upsert page ──────
     try {
-        const space = await getSpaceByKey(spaceKey);
+        const storageBody = buildPageStorageBody(fullMarkdown);
 
-        // Prepend anchor + TOC macro.
-        // Heading structure: H1 = portfolio key title, H2 = sections, H3 = sub-sections, H4 = LCT teams.
-        // TOC covers levels 1–3; H4 team headings stay out of the TOC (they're fine inline).
-        const anchor      = buildAnchorMacro('top');
-        const toc         = buildTocMacro(1, 4);
-        const now         = new Date();
-        const createdAt   = new Intl.DateTimeFormat('en-CA', {
-            timeZone: REPORT_TIMEZONE,
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', hour12: false,
-        }).format(now).replace(',', ''); // → "YYYY-MM-DD HH:MM"
-        const tzLabel     = new Intl.DateTimeFormat('en', { timeZone: REPORT_TIMEZONE, timeZoneName: 'short' })
-            .formatToParts(now).find(p => p.type === 'timeZoneName')?.value ?? REPORT_TIMEZONE;
-        const storageBody = `<p>${anchor}<em>📅 <strong>Created at:</strong> ${createdAt} ${tzLabel}</em></p>` + '\n' + toc + '\n<hr/>\n' + markdownToStorage(fullMarkdown);
+        // Resolve destination (folderId > newFolderTitle > parentPath > space root)
+        const { space, parentId, parentIsFolder } = await resolveDestination(spaceKey, folderId, newFolderTitle, parentPath);
 
-        // ── Resolve parentId ──────────────────────────────────────────────
-        // Priority: folderId > newFolderTitle > parentPath > none (space root)
-        let parentId       = null;
-        let parentIsFolder = false;
-
-        if (folderId) {
-            parentId       = folderId;
-            parentIsFolder = true;
-        } else if (newFolderTitle) {
-            // Try to create the folder. If Confluence rejects with 400 (name conflict),
-            // fall back to a title search so the same newFolderTitle can be reused on
-            // every re-export without the caller having to switch to folderId manually.
-            // Any other HTTP error (403, 422, 5xx …) is surfaced immediately with the
-            // real Confluence response so it is diagnosable.
-            try {
-                const folder = await createFolder(space.id, newFolderTitle);
-                parentId       = String(folder.id);
-                parentIsFolder = true;
-            } catch (folderErr) {
-                const errMsg    = folderErr?.message ?? String(folderErr);
-                const isConflict = /HTTP 400/i.test(errMsg) || /already exist/i.test(errMsg);
-
-                if (!isConflict) {
-                    // Not a name-conflict — surface the real Confluence error directly.
-                    throw new Error(`Could not create folder "${newFolderTitle}": ${errMsg}`);
-                }
-
-                // HTTP 400 → folder likely already exists; try to locate it by title.
-                const existing = await findFolderByTitle(space.id, spaceKey, newFolderTitle);
-                if (existing) {
-                    parentId       = String(existing.id);
-                    parentIsFolder = true;
-                } else {
-                    // Conflict but can't find it — surface the original error for diagnosis.
-                    throw new Error(
-                        `Could not create folder "${newFolderTitle}" (conflict) and could not locate it by title. ` +
-                        `Original error: ${errMsg}. ` +
-                        `Open the folder in Confluence, copy the numeric ID from the URL ` +
-                        `(e.g. /folder/52592641 → "52592641"), and re-export using folderId instead of newFolderTitle.`
-                    );
-                }
-            }
-        } else if (parentPath) {
-            parentId       = await findOrCreatePageByPath(space.id, parentPath);
-            parentIsFolder = false;
-        }
-
-        // ── Upsert logic (3-tier) — same for single-key and combined ────────
-        // 1. Scoped search → page exists at target location → update in-place.
-        // 2. Space-wide search → page exists elsewhere → MOVE + refresh content.
-        // 3. No match anywhere → create fresh page at target location.
-        // Same-day re-exports (individual or combined) always replace the existing page.
-        const existingAtTarget = await findPageByTitle(space.id, pageTitle, parentId, parentIsFolder);
-        let page, wasUpdated = false, wasMoved = false;
-
-        if (existingAtTarget) {
-            page       = await updateConfluencePage(existingAtTarget.id, existingAtTarget.version.number, space.id, pageTitle, storageBody);
-            wasUpdated = true;
-        } else {
-            const existingElsewhere = await findPageByTitle(space.id, pageTitle);
-            if (existingElsewhere) {
-                page       = await updateConfluencePage(existingElsewhere.id, existingElsewhere.version.number, space.id, pageTitle, storageBody, parentId || null);
-                wasUpdated = true;
-                wasMoved   = true;
-            } else {
-                page = await createConfluencePage(space.id, pageTitle, storageBody, parentId);
-            }
-        }
-
-        const pageUrl = `${env.baseUrl}/wiki${page._links?.webui || `/spaces/${spaceKey}/pages/${page.id}`}`;
+        // 3-tier upsert: update-in-place → move+update → create
+        const { pageUrl, wasUpdated, wasMoved } = await upsertConfluencePage(space, env, spaceKey, pageTitle, storageBody, parentId, parentIsFolder);
 
         return {
             status:           'SUCCESS',

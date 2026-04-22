@@ -29,6 +29,9 @@ modules:
         - clear-admin-registry
         - get-my-account-id
         - get-team-sprint-analysis
+        - get-team-lead-time
+        - export-team-sprint
+        - export-team-lead-time
         - export-skill-docs
 
   function:
@@ -68,6 +71,12 @@ modules:
       handler: index.inspectStorage
     - key: getTeamSprintAnalysis
       handler: index.getTeamSprintAnalysis
+    - key: getTeamLeadTime
+      handler: index.getTeamLeadTime
+    - key: exportTeamSprint
+      handler: index.exportTeamSprint
+    - key: exportTeamLeadTime
+      handler: index.exportTeamLeadTime
     - key: exportSkillDocs
       handler: index.exportSkillDocs
 
@@ -271,6 +280,92 @@ modules:
           type: string
           description: "The agile team name as it appears in the Jira Agile Team field (e.g. Titan, Comet, Vanguard)."
           required: true
+
+    - key: get-team-lead-time
+      function: getTeamLeadTime
+      name: Get Team Lead Time & Cycle Time
+      actionVerb: GET
+      description: "On-demand Lead Time / Cycle Time report for one or more agile teams. Fetches all completed Story/Task/Bug items from the last 6 months, computes average lead time and cycle time broken down by issue type. Accepts a comma-separated list of team names (e.g. 'Titan, Bushido'). Renders a markdown table in chat."
+      inputs:
+        teamNames:
+          title: Team Names
+          type: string
+          description: "One or more agile team names as they appear in the Jira Agile Team field. Separate multiple teams with commas (e.g. 'Titan, Bushido, Comet')."
+          required: true
+
+    - key: export-team-sprint
+      function: exportTeamSprint
+      name: Export Team Sprint Analysis to Confluence
+      actionVerb: GET
+      description: "Exports a Sprint Analysis Confluence page for one or more agile teams. Discovers each team's board, fetches the last 6 closed sprints via GreenHopper, computes velocity / say-do / rolled-over SP and trend analytics, then creates or updates a page in the target Confluence space."
+      inputs:
+        teamNames:
+          title: Team Names
+          type: string
+          description: "One or more agile team names (comma-separated, e.g. 'Titan, Bushido')."
+          required: true
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: "Target Confluence space key (e.g. PROJ)."
+          required: true
+        parentPath:
+          title: Parent Page Path
+          type: string
+          description: "Optional slash-separated path of existing pages under which to nest the exported page (e.g. 'Engineering / Team Reports')."
+          required: false
+        folderId:
+          title: Folder ID
+          type: string
+          description: "Optional numeric ID of an existing Confluence folder. Overrides parentPath."
+          required: false
+        newFolderTitle:
+          title: New Folder Title
+          type: string
+          description: "Optional title of a new Confluence folder to create (or locate if already exists)."
+          required: false
+        titleSuffix:
+          title: Title Suffix
+          type: string
+          description: "Optional label appended to the page title in place of the team name list."
+          required: false
+
+    - key: export-team-lead-time
+      function: exportTeamLeadTime
+      name: Export Team Lead Time & Cycle Time to Confluence
+      actionVerb: GET
+      description: "Exports a Lead Time / Cycle Time Confluence page for one or more agile teams. Fetches all completed items from the last 6 months and computes average lead time and cycle time broken down by issue type, then creates or updates a page in the target Confluence space."
+      inputs:
+        teamNames:
+          title: Team Names
+          type: string
+          description: "One or more agile team names (comma-separated, e.g. 'Titan, Bushido')."
+          required: true
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: "Target Confluence space key (e.g. PROJ)."
+          required: true
+        parentPath:
+          title: Parent Page Path
+          type: string
+          description: "Optional slash-separated path of existing pages under which to nest the exported page."
+          required: false
+        folderId:
+          title: Folder ID
+          type: string
+          description: "Optional numeric ID of an existing Confluence folder. Overrides parentPath."
+          required: false
+        newFolderTitle:
+          title: New Folder Title
+          type: string
+          description: "Optional title of a new Confluence folder to create (or locate if already exists)."
+          required: false
+        titleSuffix:
+          title: Title Suffix
+          type: string
+          description: "Optional label appended to the page title in place of the team name list."
+          required: false
 
     - key: wipe-global-storage
       function: wipeGlobalStorage

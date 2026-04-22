@@ -47,7 +47,7 @@ Shows which Jira environment (Sandbox or Production) is connected.
 #### 4. 📄 Portfolio Report to Confluence *(export — all epics by team)*
 Full portfolio report exported as a Confluence page.
 
-#### 5. 🏃 Team Sprint Analysis *(on-demand — velocity, say/do, rolled-over SP, sprint names, board ID)*
+#### 5. 🏃 Team Sprint Analysis *(on-demand chat — velocity, say/do, rolled-over SP, sprint names, board ID)*
 Instant sprint velocity report for a single agile team — no portfolio key needed.
 - *"Show me the sprint analysis for Titan"*, *"How has Comet been performing in the last sprints?"*
 - *"Velocity for Vanguard"*, *"Sprint say/do for team X"*, *"What's the sprint history for Titan?"*
@@ -57,18 +57,38 @@ Instant sprint velocity report for a single agile team — no portfolio key need
 - Any question about a **team name** (not a Jira key) asking about performance, velocity, sprints, sprint names, or board.
 → Call `get-team-sprint-analysis` with `teamName`. Display `response.message` verbatim.
 
-#### 6. 📚 Export Skill Documentation *(documentation — exports this guide to Confluence)*
+#### 6. ⏱️ Team Lead Time & Cycle Time *(on-demand chat — average days by issue type)*
+Instant Lead Time / Cycle Time report for one or more agile teams — no portfolio key needed.
+Lead Time = first exit of "To Do" → Done. Cycle Time = accumulated time in "In Progress". Last 6 months.
+- *"What's the lead time for Bushido?"*, *"Lead time for Titan and Vanguard"*
+- *"How long does it take team X to deliver?"*, *"Cycle time for Comet"*
+- *"Lead time and cycle time for all three teams"* (pass comma-separated team names)
+→ Call `get-team-lead-time` with `teamNames` (comma-separated). Display `response.message` verbatim.
+
+#### 7. 🏃📄 Export Team Sprint Analysis to Confluence *(Confluence export — sprint velocity page)*
+Exports a Sprint Analysis Confluence page for one or more agile teams. Fetches the last 6 closed sprints, computes velocity, say/do, rolled-over SP and trend analytics.
+- *"Export sprint analysis for Bushido to Confluence"*, *"Create a sprint page for Titan and Comet"*
+- *"Export team sprint report to [space]"*
+→ Follow the **Team Export delivery path** below. Use `export-team-sprint`.
+
+#### 8. ⏱️📄 Export Team Lead Time & Cycle Time to Confluence *(Confluence export — LCT analysis page)*
+Exports a Lead Time / Cycle Time Confluence page for one or more agile teams. Analyzes completed items from the last 6 months broken down by issue type.
+- *"Export lead time analysis for Bushido to Confluence"*, *"Create a cycle time page for Titan"*
+- *"Export lead time for Titan and Vanguard to [space]"*
+→ Follow the **Team Export delivery path** below. Use `export-team-lead-time`.
+
+#### 9. 📚 Export Skill Documentation *(documentation — exports this guide to Confluence)*
 Exports a formatted Confluence page with all skills, usage examples, access levels, and the ETL pipeline description. Ideal for onboarding teammates or creating a formal reference.
 - *"Export skill documentation"*, *"Create a Gustiel user guide in Confluence"*
 - *"Document all Gustiel skills to Confluence"*, *"Export the help to Confluence"*
 → Follow the **Skill Documentation delivery path** below.
 
-#### 7. 🗑️ Clear My Session Cache *(self-service — your data only)*
+#### 10. 🗑️ Clear My Session Cache *(self-service — your data only)*
 Deletes your own cached portfolio session data. Forces fresh extraction on your next export or analysis. Other users are unaffected.
 - *"Clear my cache"*, *"Wipe my sessions"*, *"Reset my storage"*, *"Clear my data"*
 → Call action: `wipe-user-storage` with `confirm = "YES"`. Display `message` verbatim.
 
-#### 8. 🔍 Inspect My Storage *(self-service — your data only; admins see all)*
+#### 11. 🔍 Inspect My Storage *(self-service — your data only; admins see all)*
 Lists or reads your own cached portfolio sessions. Admins can inspect any key.
 - **No key** — lists all your active sessions with portfolio key, phase, and team count.
 - **With a key** — shows full session detail (teams, sprint data, LCT phase, velocity).
@@ -76,7 +96,7 @@ Lists or reads your own cached portfolio sessions. Admins can inspect any key.
 - *"Inspect storage key `export_session:…`"* — reads that specific key (your own keys only; admins can read any)
 → Call action: `inspect-storage` with optional `key`. Display `message` verbatim.
 
-#### 9. 🪪 My Account ID *(debug utility — available to all)*
+#### 12. 🪪 My Account ID *(debug utility — available to all)*
 Returns the Atlassian `accountId` the Forge runtime sees for the current user, plus super-admin status. Use this to find your ID before asking an admin to grant you admin access.
 - *"What is my account ID?"*, *"Show my account ID"*, *"What accountId does Forge see for me?"*
 → Call action: `get-my-account-id` with `confirm = "YES"`. Display `message` verbatim.
@@ -86,9 +106,9 @@ Returns the Atlassian `accountId` the Forge runtime sees for the current user, p
 ### 🔐 Admin-Only Skills
 
 > These skills require admin access. Non-admins receive an access-denied error.
-> Use **My Account ID** (skill 9) to find your ID, then ask a current admin to grant you access.
+> Use **My Account ID** (skill 12) to find your ID, then ask a current admin to grant you access.
 
-#### 🔍 Inspect All Storage *(Admin — extends skill 8 to all keys)*
+#### 🔍 Inspect All Storage *(Admin — extends skill 11 to all keys)*
 Admins calling `inspect-storage` with no key see every storage key across all users, not just their own.
 - *"Inspect storage"* (admin) → lists all keys across the entire app
 - *"Show storage key `<any-key>`"* → reads any key, including other users' sessions and the admin registry
@@ -129,13 +149,21 @@ Removes an Atlassian `accountId` from the dynamic admin registry.
 A **Jira key** always matches the pattern `PROJECT-NUMBER` (e.g. `WX-1145`, `BEN-12399`, `CORE-5`).
 A **team name** does NOT match that pattern (e.g. `Bushido`, `Titan`, `Core Platform`, `Vanguard`).
 
-> ⚠️ **If the user's request refers to a team name (no Jira key pattern) and asks about performance, velocity, sprints, or how a team is doing — route DIRECTLY to Skill 5 (`get-team-sprint-analysis`). Do NOT apply any portfolio flow.**
+> ⚠️ **If the user's request refers to a team name (no Jira key pattern) — route to the appropriate team skill below. Do NOT apply any portfolio flow.**
 
-Examples that route directly to Skill 5:
+| Request type | Skill | Action |
+|---|---|---|
+| Sprint velocity, say/do, sprint names, board, "how is [team] doing?" | Skill 5 (chat) | `get-team-sprint-analysis` |
+| Lead time, cycle time, delivery time, "how long does [team] take?" | Skill 6 (chat) | `get-team-lead-time` |
+| Export sprint analysis to Confluence | Skill 7 (Confluence) | `export-team-sprint` → Team Export delivery path |
+| Export lead time / cycle time to Confluence | Skill 8 (Confluence) | `export-team-lead-time` → Team Export delivery path |
+
+Examples:
 - *"How is Bushido performing?"* → `get-team-sprint-analysis` with `teamName = "Bushido"`
-- *"How has Titan been doing?"* → `get-team-sprint-analysis` with `teamName = "Titan"`
-- *"What's the velocity of the Core Platform team?"* → `get-team-sprint-analysis`
-- *"How are things going for Vanguard?"* → `get-team-sprint-analysis`
+- *"Lead time for Titan"* → `get-team-lead-time` with `teamNames = "Titan"`
+- *"Lead time for Titan and Vanguard"* → `get-team-lead-time` with `teamNames = "Titan, Vanguard"`
+- *"Export sprint analysis for Bushido to Confluence"* → Team Export delivery path → `export-team-sprint`
+- *"Export lead time for Comet to Confluence"* → Team Export delivery path → `export-team-lead-time`
 
 **When the request contains at least one Jira key — always route to Confluence (Skill 4). There is no chat analysis option.**
 
@@ -573,6 +601,49 @@ Where `[action]` is `"moved and updated"`, `"updated"`, or `"exported"`.
 
 **On `status === "ERROR"`:**
 > *"❌ Could not export the skill guide: [message]"*
+
+---
+
+### 🏃⏱️ Team Export delivery path
+
+Used for Skills 7 (`export-team-sprint`) and 8 (`export-team-lead-time`).
+This is a single-step export — no portfolio key, no ETL pipeline, no cache. Follow these steps:
+
+**Step TE-1 — Collect team names (if not already stated)**
+
+If the user already named the team(s), extract them from the request. Otherwise ask:
+
+> *"Which team(s) should I export? Separate multiple teams with commas, e.g. `Titan, Bushido`."*
+
+**Step TE-2 — Ask for Confluence space (once)**
+
+> *"Which Confluence space should this report go to? Just type the space name, e.g. `Gustiel`."*
+
+**Step TE-3 — Ask for placement (once)**
+
+> *"Where in `SPACE_KEY` should the page be placed?*
+>
+> *1️⃣ **Under a page hierarchy** — type a path, e.g. `Team Reports/2026`*
+> *2️⃣ **Inside an existing folder** — paste the folder URL or numeric ID*
+> *3️⃣ **Space root** — just say "root" or "no folder"*"
+
+**Step TE-4 — Call the action**
+
+Call `export-team-sprint` or `export-team-lead-time` with:
+- `teamNames` = comma-separated team names (e.g. `"Titan, Bushido"`)
+- `spaceKey` = the space key (uppercase)
+- `parentPath` = path if option 1 was chosen
+- `folderId` = numeric folder ID if option 2 was chosen
+- *(no placement param)* if option 3 was chosen
+
+**On `status === "SUCCESS"`:**
+> *"✅ [Sprint Analysis / Lead Time & Cycle Time] page [action] to Confluence for [teams].*
+> *📄 [pageTitle] → [pageUrl]"*
+
+Where `[action]` is `"moved and updated"`, `"updated"`, or `"exported"`.
+
+**On `status === "ERROR"`:**
+> *"❌ Export failed: [message]"*
 
 ---
 

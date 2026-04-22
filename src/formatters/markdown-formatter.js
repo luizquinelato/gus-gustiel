@@ -806,3 +806,63 @@ export function formatTeamSprintChat(teamName, boardName, boardId, sprints, tren
 
     return lines.join('\n');
 }
+
+
+/**
+ * Format a Lead Time / Cycle Time chat response for one or more teams.
+ *
+ * @param {string[]} teams      - Team names in display order
+ * @param {Object}   lctByTeam - { [team]: { byType: { [type]: { leadTime, cycleTime } }, overall } }
+ *                               as returned by finalizeLCTAccumulator()
+ * @returns {string} Markdown string
+ */
+export function formatTeamLeadTimeChat(teams, lctByTeam) {
+    const lines = [];
+
+    const label = teams.length === 1 ? teams[0] : teams.join(', ');
+    lines.push(`## ⏱️ Lead Time / Cycle Time — ${label}`);
+    lines.push('');
+    lines.push('> **Lead Time** = time from first exit of _To Do_ → _Done_ (last 6 months, completed Story/Task/Bug only).');
+    lines.push('> **Cycle Time** = accumulated time in all _In Progress_ windows. Items never reaching _In Progress_ are excluded.');
+    lines.push('');
+
+    for (const team of teams) {
+        const lct = lctByTeam[team];
+        if (teams.length > 1) {
+            lines.push(`### ${team}`);
+        }
+
+        if (!lct || !lct.byType || Object.keys(lct.byType).length === 0) {
+            lines.push('_No qualifying completed items found in the last 6 months._');
+            lines.push('');
+            continue;
+        }
+
+        const totalItems = Object.values(lct.byType)
+            .reduce((sum, m) => sum + Math.max(m.leadTime?.count ?? 0, m.cycleTime?.count ?? 0), 0);
+
+        lines.push(`**${totalItems} item${totalItems === 1 ? '' : 's'} analyzed** across ${Object.keys(lct.byType).length} issue type${Object.keys(lct.byType).length === 1 ? '' : 's'}:`);
+        lines.push('');
+        lines.push('| Issue Type | Items | Lead Time (avg) | Cycle Time (avg) |');
+        lines.push('|---|:---:|:---:|:---:|');
+
+        for (const type of Object.keys(lct.byType).sort()) {
+            const m       = lct.byType[type];
+            const items   = Math.max(m.leadTime?.count ?? 0, m.cycleTime?.count ?? 0);
+            const leadAvg = m.leadTime  ? `**${m.leadTime.averageDays}d**`  : '—';
+            const cycAvg  = m.cycleTime ? `**${m.cycleTime.averageDays}d**` : '—';
+            lines.push(`| ${type} | ${items} | ${leadAvg} | ${cycAvg} |`);
+        }
+
+        // Overall summary row
+        if (lct.overall) {
+            const ov = lct.overall;
+            const oLead = ov.leadTime  ? `**${ov.leadTime.averageDays}d**`  : '—';
+            const oCyc  = ov.cycleTime ? `**${ov.cycleTime.averageDays}d**` : '—';
+            lines.push(`| **Overall** | ${totalItems} | ${oLead} | ${oCyc} |`);
+        }
+        lines.push('');
+    }
+
+    return lines.join('\n');
+}
