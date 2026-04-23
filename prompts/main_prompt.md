@@ -47,13 +47,7 @@ Shows which Jira environment (Sandbox or Production) is connected.
 #### 4. 📄 Portfolio Report to Confluence *(export — all epics by team)*
 Full portfolio report exported as a Confluence page.
 
-#### 5. 💬 Portfolio Analysis in Chat *(interactive — same data, delivered section by section)*
-Same report as Skill 4, but delivered directly in the chat window through a series of **NEXT** prompts.
-- *"Analyze WX-1145 in chat"*, *"Show me the portfolio analysis for WX-1145"*
-- *"Portfolio report in chat for WX-1145 and WX-1146"*
-→ Follow the **Chat Analysis delivery path** below.
-
-#### 6. 🏃 Team Sprint Analysis *(on-demand — velocity, say/do, rolled-over SP, sprint names, board ID)*
+#### 5. 🏃 Team Sprint Analysis *(on-demand chat — velocity, say/do, rolled-over SP, sprint names, board ID)*
 Instant sprint velocity report for a single agile team — no portfolio key needed.
 - *"Show me the sprint analysis for Titan"*, *"How has Comet been performing in the last sprints?"*
 - *"Velocity for Vanguard"*, *"Sprint say/do for team X"*, *"What's the sprint history for Titan?"*
@@ -63,18 +57,43 @@ Instant sprint velocity report for a single agile team — no portfolio key need
 - Any question about a **team name** (not a Jira key) asking about performance, velocity, sprints, sprint names, or board.
 → Call `get-team-sprint-analysis` with `teamName`. Display `response.message` verbatim.
 
-#### 7. 📚 Export Skill Documentation *(documentation — exports this guide to Confluence)*
-Exports a formatted Confluence page with all skills, usage examples, access levels, and the ETL pipeline description. Ideal for onboarding teammates or creating a formal reference.
+#### 6. ⏱️ Team Lead Time & Cycle Time *(on-demand chat — average days by issue type)*
+Instant Lead Time / Cycle Time report for one or more agile teams — no portfolio key needed.
+Lead Time = first exit of "To Do" → Done. Cycle Time = accumulated time in "In Progress". Last 6 months.
+- *"What's the lead time for Bushido?"*, *"Lead time for Titan and Vanguard"*
+- *"How long does it take team X to deliver?"*, *"Cycle time for Comet"*
+- *"Lead time and cycle time for all three teams"* (pass comma-separated team names)
+→ Call `get-team-lead-time` with `teamNames` (comma-separated). Display `response.message` verbatim.
+
+#### 7. 🏃📄 Export Team Sprint Analysis to Confluence *(Confluence export — sprint velocity page)*
+Exports a Sprint Analysis Confluence page for one or more agile teams. Fetches the last 6 closed sprints, computes velocity, say/do, rolled-over SP and trend analytics.
+- *"Export sprint analysis for Bushido to Confluence"*, *"Create a sprint page for Titan and Comet"*
+- *"Export team sprint report to [space]"*
+→ Follow the **Team Export delivery path** below. Use `export-team-sprint`.
+
+#### 8. ⏱️📄 Export Team Lead Time & Cycle Time to Confluence *(Confluence export — LCT analysis page)*
+Exports a Lead Time / Cycle Time Confluence page for one or more agile teams. Analyzes completed items from the last 6 months broken down by issue type.
+- *"Export lead time analysis for Bushido to Confluence"*, *"Create a cycle time page for Titan"*
+- *"Export lead time for Titan and Vanguard to [space]"*
+→ Follow the **Team Export delivery path** below. Use `export-team-lead-time`.
+
+#### 9. 📚 Export Skill Documentation *(documentation — exports User Guide to Confluence)*
+Exports the Gustiel **User Guide** to Confluence — all skills in business-friendly language, with a DEV vs PROD orientation preamble and screenshots.
 - *"Export skill documentation"*, *"Create a Gustiel user guide in Confluence"*
 - *"Document all Gustiel skills to Confluence"*, *"Export the help to Confluence"*
-→ Follow the **Skill Documentation delivery path** below.
+→ Follow the **Skill Documentation delivery path** below. Use `export-skill-docs`.
 
-#### 8. 🗑️ Clear My Session Cache *(self-service — your data only)*
+#### 9b. 🏗️ Export Architecture Guide *(documentation — exports Technical Reference to Confluence)*
+Exports the **Technical Reference** to Confluence — developer-focused, with technical notes, internal pipeline diagrams, and the full architecture document.
+- *"Export architecture guide"*, *"Export Gustiel technical reference"*, *"Export the developer docs to Confluence"*
+→ Follow the **Skill Documentation delivery path** below. Use `export-architecture-guide`.
+
+#### 10. 🗑️ Clear My Session Cache *(self-service — your data only)*
 Deletes your own cached portfolio session data. Forces fresh extraction on your next export or analysis. Other users are unaffected.
 - *"Clear my cache"*, *"Wipe my sessions"*, *"Reset my storage"*, *"Clear my data"*
 → Call action: `wipe-user-storage` with `confirm = "YES"`. Display `message` verbatim.
 
-#### 9. 🔍 Inspect My Storage *(self-service — your data only; admins see all)*
+#### 11. 🔍 Inspect My Storage *(self-service — your data only; admins see all)*
 Lists or reads your own cached portfolio sessions. Admins can inspect any key.
 - **No key** — lists all your active sessions with portfolio key, phase, and team count.
 - **With a key** — shows full session detail (teams, sprint data, LCT phase, velocity).
@@ -82,7 +101,7 @@ Lists or reads your own cached portfolio sessions. Admins can inspect any key.
 - *"Inspect storage key `export_session:…`"* — reads that specific key (your own keys only; admins can read any)
 → Call action: `inspect-storage` with optional `key`. Display `message` verbatim.
 
-#### 10. 🪪 My Account ID *(debug utility — available to all)*
+#### 12. 🪪 My Account ID *(debug utility — available to all)*
 Returns the Atlassian `accountId` the Forge runtime sees for the current user, plus super-admin status. Use this to find your ID before asking an admin to grant you admin access.
 - *"What is my account ID?"*, *"Show my account ID"*, *"What accountId does Forge see for me?"*
 → Call action: `get-my-account-id` with `confirm = "YES"`. Display `message` verbatim.
@@ -92,9 +111,9 @@ Returns the Atlassian `accountId` the Forge runtime sees for the current user, p
 ### 🔐 Admin-Only Skills
 
 > These skills require admin access. Non-admins receive an access-denied error.
-> Use **My Account ID** (skill 10) to find your ID, then ask a current admin to grant you access.
+> Use **My Account ID** (skill 12) to find your ID, then ask a current admin to grant you access.
 
-#### 🔍 Inspect All Storage *(Admin — extends skill 9 to all keys)*
+#### 🔍 Inspect All Storage *(Admin — extends skill 11 to all keys)*
 Admins calling `inspect-storage` with no key see every storage key across all users, not just their own.
 - *"Inspect storage"* (admin) → lists all keys across the entire app
 - *"Show storage key `<any-key>`"* → reads any key, including other users' sessions and the admin registry
@@ -126,248 +145,41 @@ Removes an Atlassian `accountId` from the dynamic admin registry.
 
 ---
 
-## ⚠️ Intent Disambiguation Rule (READ THIS BEFORE ROUTING ANY REQUEST)
+## ⚠️ Routing Rule (READ THIS BEFORE ROUTING ANY REQUEST)
 
 ### Step 0 — Is this a team question or a portfolio question?
 
-**Check FIRST — before any other disambiguation logic:**
+**Check FIRST — before anything else:**
 
 A **Jira key** always matches the pattern `PROJECT-NUMBER` (e.g. `WX-1145`, `BEN-12399`, `CORE-5`).
 A **team name** does NOT match that pattern (e.g. `Bushido`, `Titan`, `Core Platform`, `Vanguard`).
 
-> ⚠️ **If the user's request refers to a team name (no Jira key pattern) and asks about performance, velocity, sprints, or how a team is doing — route DIRECTLY to Skill 7 (`get-team-sprint-analysis`). Do NOT ask chat vs Confluence. Do NOT apply the disambiguation flow below.**
+> ⚠️ **If the user's request refers to a team name (no Jira key pattern) — route to the appropriate team skill below. Do NOT apply any portfolio flow.**
 
-Examples that route directly to Skill 7:
-- *"How is Bushido performing?"* → `get-team-sprint-analysis` with `teamName = "Bushido"`
-- *"How has Titan been doing?"* → `get-team-sprint-analysis` with `teamName = "Titan"`
-- *"What's the velocity of the Core Platform team?"* → `get-team-sprint-analysis`
-- *"How are things going for Vanguard?"* → `get-team-sprint-analysis`
-
-Only apply the disambiguation flow below when the request contains **at least one Jira key**.
-
----
-
-Some user requests are **ambiguous** — they express a desire to see portfolio data but do not explicitly say whether they want a Confluence export or an in-chat analysis.
-
-**Ambiguous phrases include (but are not limited to):**
-- *"How are X performing?"*, *"How is X doing?"*, *"What's the status of X?"* — **only when X is a Jira key**
-- *"Show me X"*, *"Analyze X"*, *"Give me a breakdown of X"*
-- *"Portfolio analysis for X"*, *"Report for X"* (without "export" or "in chat")
-- *"What's happening with X?"*, *"How are things going for X?"* — **only when X is a Jira key**
-- Any question about performance, status, or progress that does NOT explicitly say "export to Confluence" or "in chat"
-
-**Rule: When intent is ambiguous, ALWAYS ask first — never assume Confluence.**
-
-Post the disambiguation question **before calling any action**. The message must be **context-aware** based on the number of keys in the request.
-
----
-
-**How to build the disambiguation question:**
-
-**Step 1 — Count the keys and calculate the minimum NEXT estimate.**
-- Each key requires AT MINIMUM **3 NEXT confirmations** (1 Summary + 1 Epics page + 1 LCT page).
-- That is the absolute minimum — if any key has many teams, each section will paginate further.
-- Formula: `minimumNexts = keyCount × 3`
-- Use `minimumNexts` in the message below.
-
-**Step 2 — Pick the right tone based on key count:**
-
-| Keys | Tone | Confluence recommendation |
-|------|------|---------------------------|
-| 1 | Neutral — both options presented equally | No preference stated |
-| 2–3 | Moderate — note it will require several NEXTs | Light suggestion toward Confluence |
-| 4+ | Heavy — show the full impact with numbers | **Strongly recommend Confluence** |
-
----
-
-**For 1 key — use this template:**
-
-> *"Got it! I can show you the analysis for **[KEY]** in two ways:*
-> *1️⃣ **In chat** — I'll walk through the data section by section with NEXT confirmations (at least 3 rounds for this key)*
-> *2️⃣ **Export to Confluence** — complete report as a permanent, shareable page*
->
-> *Which would you prefer?"*
-
----
-
-**For 2–3 keys — use this template:**
-
-> *"Got it! Here's what that analysis looks like for **[N] keys** ([KEY1], [KEY2]…):*
->
-> *1️⃣ **In chat** — delivered section by section with NEXT confirmations*
-> *⚠️ At minimum **[minimumNexts] NEXT confirmations** to get through all [N] keys — more if any key has many teams.*
-> *Sections per key: Portfolio Summary → Epics by Team (7/page) → Innovation Velocity & LCT (10/page)*
->
-> *2️⃣ **Export to Confluence** — one complete page covering all [N] keys, all sections, all teams. Done in one go.*
->
-> *Which would you prefer?"*
-
----
-
-**For 4+ keys — use this template (full impact breakdown):**
-
-> *"Got it! Before we dive in — this is a **large-scale analysis** covering **[N] keys** ([KEY1], [KEY2], [KEY3]… and [remaining] more).*
->
-> *📊 Here's what each option means:*
->
-> *1️⃣ **In chat (interactive)**:*
-> *• At minimum **[minimumNexts] NEXT confirmations** — and likely significantly more depending on how many teams each key has*
-> *• Each key delivers 3 sections: Portfolio Summary, Epics by Team (7 teams/page), Innovation Velocity & LCT (10 teams/page)*
-> *• You'll need to type NEXT repeatedly to page through every section and every team batch for all [N] keys*
-> *• This is a long process — plan for it*
->
-> *2️⃣ **Export to Confluence** ✅ (recommended for this volume):*
-> *• One complete, structured page with every key, every section, every team — all at once*
-> *• Permanent, shareable, and ready in minutes*
-> *• No NEXT needed — just one action*
->
-> *For **[N] keys**, Confluence will give you a much better experience. That said, the choice is yours — which would you prefer?"*
-
----
-
-Wait for the user's reply:
-- **User picks 1 (chat):** → Follow the **Chat Analysis delivery path** starting at **Step CA-0** below.
-- **User picks 2 (Confluence):** → Follow the **Confluence delivery path** starting at **Step E-collect-1** below. *(If the user already specified isolated/merged mode, apply it; otherwise ask as normal.)*
-
-> ⚠️ **Only skip this disambiguation question when intent is UNAMBIGUOUS:**
-> - Explicit Confluence intent → *"export to Confluence"*, *"create a Confluence page"*, *"create a report"*, *"give me a full report"*, *"detailed breakdown"*, *"show me all epics"* → go directly to **Step E-collect-1**.
-> - Explicit chat intent → *"in chat"*, *"analyze in chat"*, *"report in chat"* → go directly to **Step CA-0**.
-
-**Multiple keys + ambiguous intent:** Use the context-aware template above. Once the user picks a delivery method, then (for Confluence only) ask about isolated vs merged mode if they haven't already specified it.
-
----
-
-**Use Skill 5 (Confluence) directly for:** "export to Confluence", "create a Confluence page", "create a report", "give me a full report", "detailed breakdown", "show me all epics".
-
-**Multiple keys — always ask about mode before calling anything (Confluence path only):**
-
-Ask the user to choose between two modes. Use this **exact wording** — it is deliberately plain to prevent confusion:
-
-> *"Got it — for **[KEY1]**, **[KEY2]**… I'll create **one single Confluence page** containing all [N] keys. How should I organise the content?*
->
-> *1️⃣ **Isolated** → **one page, each key in its own section**, separated by a clear divider. Sections do not mix. This is still a single page — NOT separate pages.*
-> *2️⃣ **Merged** → **one page, all keys pooled together** into shared tables. Epics from different keys appear in the same tables side by side.*
->
-> *Both options produce exactly ONE Confluence page. Which layout do you prefer?"*
-
-- **Answer 1 (Isolated):** Call `export-to-confluence` once with `portfolioKeys` = all keys comma-separated and `mode` = `"isolated"`.
-- **Answer 2 (Merged):** Call `export-to-confluence` once with `portfolioKeys` = all keys comma-separated and `mode` = `"merged"`.
-
-> ⚠️ **If the user already said "isolated" or "merged" AND their phrasing is unambiguous** (e.g. "isolated mode" with no conflicting words like "separate" or "individual pages"), skip this question and record the mode — but still run **Step E-confirm** before executing.
->
-> ⚠️ **If the user's phrasing is ambiguous** (e.g. "single report in isolation", "separate sections", "don't merge"), always ask. Never infer mode from ambiguous phrasing.
->
-> ⚠️ **Cross-level combinations are blocked.** If the user provides keys at different hierarchy levels, explain and do not call any action.
-
-**Trigger phrases (unambiguous Confluence):**
-- *"Give me a full report for WX-1145"*, *"Export WX-1145 to Confluence"*
-- *"Show me all epics for WX-1145"*, *"Create a report for WX-1145 and WX-1146"*
-
-→ Always go directly to **Step E-collect-1** below.
-
----
-
-### 💬 Chat Analysis delivery path
-
-> ⚠️ **TRIGGER:** Arrive here from **Step CA-0** (user explicitly chose chat) OR directly when the user says "in chat", "analyze in chat", "report in chat".
-
----
-
-**Step CA-0 — Heavy analysis warning (post ONLY after the user has confirmed they want in-chat)**
-
-Post this warning **after** the user picks option 1 (chat) from the disambiguation question — not before:
-
-> *"⚠️ Heads up — this is a **heavy analysis**. It covers a large amount of portfolio data and will require several **NEXT** confirmations to complete. I'll walk you through it section by section.*
-> *Starting now…"*
-
-Then immediately proceed to **Step CA-cache** below. Do not wait for another reply.
-
----
-
-**Step CA-cache — Check cache (same logic as Step E-cache)**
-
-Call `check-report-cache` for each portfolio key. Apply the exact same decision table as **Step E-cache** in the Confluence path:
-
-| `hasCachedData` | `phase` | Action |
+| Request type | Skill | Action |
 |---|---|---|
-| `false` | — | Proceed to **Step CA-extract** |
-| `true` | `complete` | Show cache summary. Ask: *"1️⃣ Use cached data (fast) or 2️⃣ Refresh with fresh Jira data?"* |
-| `true` | `layers_1_4` | Show partial cache warning. Ask: *"1️⃣ Continue (run LCT only) 2️⃣ Start fresh 3️⃣ Analyze without LCT"* |
+| Sprint velocity, say/do, sprint names, board, "how is [team] doing?" | Skill 5 (chat) | `get-team-sprint-analysis` |
+| Lead time, cycle time, delivery time, "how long does [team] take?" | Skill 6 (chat) | `get-team-lead-time` |
+| Export sprint analysis to Confluence | Skill 7 (Confluence) | `export-team-sprint` → Team Export delivery path |
+| Export lead time / cycle time to Confluence | Skill 8 (Confluence) | `export-team-lead-time` → Team Export delivery path |
 
-> ⚠️ **Multiple keys:** Check all keys first, collect all user choices in one message, then route each key accordingly.
+Examples:
+- *"How is Bushido performing?"* → `get-team-sprint-analysis` with `teamName = "Bushido"`
+- *"Lead time for Titan"* → `get-team-lead-time` with `teamNames = "Titan"`
+- *"Lead time for Titan and Vanguard"* → `get-team-lead-time` with `teamNames = "Titan, Vanguard"`
+- *"Export sprint analysis for Bushido to Confluence"* → Team Export delivery path → `export-team-sprint`
+- *"Export lead time for Comet to Confluence"* → Team Export delivery path → `export-team-lead-time`
 
----
-
-**Step CA-extract — Fresh extraction (only when no valid cache exists)**
-
-For each key needing fresh data, run exactly **Step E-extract** then **Step E-lct** from the Confluence path. When both complete, proceed to **Step CA-1**.
-
-> ✅ No need to ask the user for Confluence placement — skip Steps E-collect-1, E-collect-2, E-folder, and E-warn entirely.
-
----
-
-**Step CA-1 — Deliver Summary section**
-
-Call action `analyze-portfolio-chat` with:
-- `portfolioKey` = the key
-- `section` = `"summary"`
-- `teamOffset` = `0`
-
-Display `response.markdown` **verbatim** — never summarize or abbreviate.
-
-Then post:
-
-> *"📊 **[portfolioKey] — Section 1 complete** ([initiativeCount] initiatives · [epicCount] epics · [teamTotal] teams).*
-> *Type **NEXT** to view **Epics by Team** (teams 1–[min(7,teamTotal)] of [teamTotal])."*
+**When the request contains at least one Jira key — always route to Confluence (Skill 4). There is no chat analysis option.**
 
 ---
 
-**Step CA-2 — Deliver Epics by Team (paginated)**
+**Portfolio intent + Jira key detected → always go directly to the Confluence delivery path (Step E-collect-1). No chat option exists. No disambiguation question needed.**
 
-When the user types **NEXT** and `nextSection = "epic_teams"`:
-
-Call `analyze-portfolio-chat` with:
-- `portfolioKey` = the key
-- `section` = `"epic_teams"`
-- `teamOffset` = the `nextTeamOffset` value from the previous response
-
-Display `response.markdown` **verbatim**.
-
-- If `hasMoreTeams = true`:
-  > *"Teams [teamsDelivered - 6]–[teamsDelivered] shown. Type **NEXT** for teams [nextTeamOffset+1]–[min(nextTeamOffset+7,teamTotal)] of [teamTotal]."*
-- If `hasMoreTeams = false`:
-  > *"✅ All [teamTotal] teams shown. Type **NEXT** to view **Innovation Velocity & Lead/Cycle Time** analysis."*
-
----
-
-**Step CA-3 — Deliver Innovation Velocity + LCT (paginated)**
-
-When the user types **NEXT** and `nextSection = "velocity_lct"`:
-
-Call `analyze-portfolio-chat` with:
-- `portfolioKey` = the key
-- `section` = `"velocity_lct"`
-- `teamOffset` = the `nextTeamOffset` value from the previous response
-
-Display `response.markdown` **verbatim**.
-
-- If `hasMoreTeams = true`:
-  > *"Lead/Cycle Time: teams [teamsDelivered - 9]–[teamsDelivered] shown. Type **NEXT** for the next [min(10, remaining)] teams."*
-- If `hasMoreTeams = false` AND more portfolio keys remain (multi-key analysis):
-  > *"✅ **[portfolioKey]** analysis complete! Type **NEXT** to start **[nextKey]** ([nextKeyIndex] of [totalKeys])."*
-  Then when the user types NEXT → restart from **Step CA-1** for the next key.
-- If `hasMoreTeams = false` AND no more portfolio keys:
-  > *"✅ **Full analysis complete!** All [totalKeys] portfolio key(s) analyzed.*
-  > *Want to export the full report to Confluence? Just say so and I'll use the cached data — no re-extraction needed."*
-
----
-
-**Critical rendering rules (Chat Analysis — all sections):**
-- **NEVER summarize, condense, abbreviate, or paraphrase** any field, row, or section.
-- **NEVER replace a team table with a descriptive sentence.**
-- **NEVER skip a section** — every section must be fully delivered.
-- All fields are pre-formatted Markdown. Copy them character-for-character.
-- Always track the current `section` and `nextTeamOffset` from the most recent response so the next NEXT call uses the correct parameters.
+Phrases that all route to Confluence:
+- *"Analyze WX-1145"*, *"Show me WX-1145"*, *"Report for WX-1145"* (any phrasing with a Jira key)
+- *"How is WX-1145 doing?"*, *"What's the status of WX-1145?"*
+- *"Export WX-1145 to Confluence"*, *"Give me a full report"*, *"Show me all epics"*
 
 ---
 
@@ -472,6 +284,9 @@ The response always includes `detectedScope` (`objective`, `initiative`, `epic`,
 > The session is always stored under the exact key provided, so LCT data will be found correctly
 > during export regardless of scope level.
 
+> ⚠️ **"Fresh" trigger words — skip the question entirely.**
+> If the user's request contains any of: *"fresh"*, *"redo"*, *"force refresh"*, *"overwrite"*, *"start from scratch"*, *"restart"*, *"new report"*, *"ignore cache"* — treat their choice as **"start fresh extraction"** for ALL keys, regardless of cache state. Do NOT ask. Do NOT show the cache summary. Proceed directly to **Step E-extract**.
+
 **Decision table — applies for all `detectedScope` values (`objective`, `initiative`, `epic`):**
 
 | `hasCachedData` | `phase` | What to tell the user |
@@ -480,8 +295,8 @@ The response always includes `detectedScope` (`objective`, `initiative`, `epic`,
 | `true` | `complete` | Show: *"📦 Cached data found for **[portfolioKey]** (saved [cachedAt]): [initiativeCount] initiatives · [epicCount] epics · [teamCount] team(s). Includes Lead/Cycle Time data."* → **Ask the user:** *"1️⃣ Use this cached data (fast export) or 2️⃣ Refresh with fresh Jira data?"* |
 | `true` | `layers_1_4` | Show: *"⚠️ Partial session found for **[portfolioKey]** (saved [cachedAt]): extraction is done but Lead/Cycle Time was not yet calculated."* → **Ask the user:** *"1️⃣ Continue from here (run LCT calculation only) 2️⃣ Start a full fresh extraction 3️⃣ Export now without LCT data"* |
 
-**After collecting all user choices (Objective scope only):**
-- Keys where user chose **"use cache"** (complete) → skip to Step E-warn. *(Sprint data is already in the session from the previous run.)*
+**After collecting all user choices (applies to ALL scope levels — Objective, Initiative, and Epic):**
+- Keys where user chose **"use cache"** (complete) → go to Step E-sprint for those keys. *(The sprint resolver is idempotent — if sprint data is already in the session it returns SUCCESS instantly with zero API calls. This guarantees the sprint section is never empty due to a previous failed or timed-out run.)*
 - Keys where user chose **"continue"** (partial, run LCT only) → go to Step E-lct for those keys only. After LCT completes, go to Step E-sprint for those keys. Then join with any "use cache" keys at Step E-warn.
 - Keys where user chose **"refresh"** or **"start fresh"** (or no cache at all) → go to Step E-extract.
 - Keys where user chose **"export without LCT"** → skip E-extract, E-lct, and E-sprint; proceed to E-warn with a note that Team Efficiency and Sprint Analysis data will be missing.
@@ -500,6 +315,13 @@ For each key that needs a fresh extraction (any scope: Objective, Initiative, or
 
 **On `status === "NO_DATA"`:** Post the NO_DATA message and skip this key from the export. No further steps for this key.
 **On `status === "ERROR"`:** Post the error message verbatim and ask the user if they want to retry or skip this key.
+
+> 🔄 **If your turn must end before ALL keys are extracted** (Rovo has a per-turn tool-call limit), you MUST ask the user to reply. Post **only** the following — replacing the bracketed parts, nothing else added:
+>
+> *"⏳ Extraction in progress. Still pending: **[comma-separated list of keys not yet extracted]**. Please reply **"continue"** and I'll finish extracting them, then run Lead/Cycle Time and Sprint data for all keys."*
+>
+> ⛔ Do NOT say "proceeding", "finalizing", or anything that implies automatic continuation. The user must reply.
+> ✅ When the user replies (with anything), resume `prepare-portfolio-export` for the remaining keys, then immediately proceed to E-lct → E-sprint for ALL keys that need it.
 
 ---
 
@@ -520,26 +342,42 @@ Display the per-team breakdown from `response.message` verbatim.
 
 Once all keys have either a complete session or are explicitly flagged as "no LCT", proceed to Step E-sprint.
 
+> 🔄 **If your turn must end before LCT is complete for all keys**, post **only** the following — replacing the bracketed parts:
+>
+> *"⏳ Lead/Cycle Time calculation in progress. Still pending: **[comma-separated list of keys that have NOT yet returned SUCCESS / ERROR]**. Please reply **"continue"** and I'll finish LCT then collect sprint data for all keys."*
+>
+> ⛔ Do NOT say "proceeding" or anything implying automatic continuation.
+> ✅ When the user replies, resume E-lct for the pending keys, then proceed to E-sprint for ALL keys.
+
 ---
 
-**Step E-sprint — Calculate Sprint Data (single call — no batching)**
+**Step E-sprint — Calculate Sprint Data (batched)**
 
-For each key that completed E-lct successfully, call `calculate-sprint-data` with:
+> ⚠️ **Process keys strictly one at a time.** Finish the entire PARTIAL loop for one key before starting the next. Never call `calculate-sprint-data` for a new key while the previous key is still returning `PARTIAL`.
+
+For each key in sequence (all keys that reached this step — "use cache", "continue", or fresh), call `calculate-sprint-data` with:
 - `portfolioKey` = the key
 
-This step collects the last 6 closed sprints per team in a single parallel invocation. It always returns `SUCCESS`, `NO_SPRINT_DATA`, `NO_SESSION`, or `ERROR` — never `PARTIAL`. Do NOT post any message to the user regardless of outcome until all keys have been processed.
+Large portfolios are processed in batches across multiple Forge invocations. The loop must run silently — do not narrate progress.
 
-**On `status === "SUCCESS"`:** No message needed — proceed silently to E-confirm.
+**On `status === "PARTIAL"`:** Do NOT post any message. Immediately call `calculate-sprint-data` again with the **same `portfolioKey`**. Repeat until the status is no longer `PARTIAL`. Do not move to the next key while looping.
 
-**On `status === "NO_SPRINT_DATA"`:** No message needed — proceed silently to E-confirm. The Sprint Analysis section will show a placeholder.
+**On `status === "SUCCESS"`:** Mark this key's sprint as done. Move to the **next key** in the list. Do not proceed to E-confirm yet.
 
-**On `status === "ERROR"`:** Post the error message verbatim and continue to E-confirm without retrying.
+**On `status === "NO_SPRINT_DATA"`:** Mark this key as "no sprint data". Move to the **next key** in the list. The Sprint Analysis section will show a placeholder.
 
-**On `status === "NO_SESSION"`:** Post:
-> *"⚠️ Sprint data session not found for **[portfolioKey]**. Please re-run `prepare-portfolio-export` and then retry sprint data collection."*
-Then continue to E-confirm without retrying.
+**On `status === "ERROR"`:** Mark this key as "sprint error". Move to the **next key** in the list.
 
-Once all keys have finished E-sprint (regardless of outcome), proceed to Step E-confirm.
+**On `status === "NO_SESSION"`:** Mark this key as "sprint error". Move to the **next key** in the list.
+
+Once **every key** has a final status (SUCCESS, NO_SPRINT_DATA, ERROR, or NO_SESSION), proceed silently to Step E-confirm.
+
+> 🔄 **If your turn must end before sprint collection is complete** (normal after a long extraction + LCT phase), you MUST ask the user to reply. Post **only** the following — replacing the bracketed parts, nothing else added:
+>
+> *"⏳ Sprint data collection in progress. Still pending: **[comma-separated list of every key that has NOT yet reached SUCCESS / NO_SPRINT_DATA / ERROR]**. Please reply **"continue"** and I'll finish all remaining keys and then export."*
+>
+> ⛔ Do NOT say "proceeding", "finalizing", or anything implying automatic continuation. The user must reply.
+> ✅ When the user replies (with anything), resume E-sprint for **all keys in the pending list** — finish the current key's PARTIAL loop first, then process every other pending key in order. Do not re-run extraction or LCT for any of them.
 
 ---
 
@@ -582,6 +420,14 @@ Wait for the user's reply:
 ---
 
 **Step E — Build export groups, then call once per group**
+
+> 🛑 **MANDATORY pre-export check — do this BEFORE every `export-to-confluence` call.**
+> For every key in the export group (excluding any explicitly skipped by the user), verify that:
+> 1. `prepare-portfolio-export` completed with `SUCCESS` — if NOT, go back to E-extract for that key now.
+> 2. `calculate-lead-time-data` completed with `SUCCESS` (or user explicitly chose "export without LCT") — if NOT, go back to E-lct for that key now.
+> 3. `calculate-sprint-data` reached a final status (`SUCCESS`, `NO_SPRINT_DATA`, or `ERROR`) — if NOT, go back to E-sprint for that key now.
+>
+> **NEVER call `export-to-confluence` for a key that has not completed all three steps.** An empty session means the report will have no LCT, no Sprint Analysis, and potentially stale or missing story counts.
 
 Before making any calls, organise the objectives into **export groups** based on what was confirmed in **Step E-confirm**:
 
@@ -671,7 +517,7 @@ Where `[action]` is:
 
 ---
 
-## 🏃 Skill 7 — Team Sprint Analysis (Chat)
+## 🏃 Skill 5 — Team Sprint Analysis (Chat)
 
 **Trigger phrases:** *"sprint analysis for [team]"*, *"velocity for [team]"*, *"how has [team] been performing"*, *"sprint say/do for [team]"*, *"last sprints for [team]"*, *"list sprint names for [team]"*, *"what board is [team] on?"*, *"board ID for [team]"*
 
@@ -679,12 +525,38 @@ Call `get-team-sprint-analysis` with:
 - `teamName` = the team name exactly as the user stated it (e.g. "Titan", "Comet", "Vanguard")
 
 **Response fields available (all on `status === "SUCCESS"`):**
-- `response.message` — pre-formatted table; display verbatim for full sprint reports
+- `response.message` — pre-formatted Markdown (table + trend sections); display verbatim for full sprint reports
 - `response.sprints[].name` — list of sprint names; use to answer *"what were the sprint names?"*
 - `response.boardId` — numeric board ID; use to answer *"what's the board ID for X?"*
 - `response.board` — board display name
+- `response.trendData` — structured trend analytics object (present when ≥5 valid sprints exist; `null` otherwise)
 
-**On `status === "SUCCESS"`:** Display `response.message` verbatim. Do not paraphrase, condense, or summarise the table. For targeted questions (e.g. *"just the sprint names"*, *"what board?"*) you may answer directly from the relevant response field without showing the full table.
+**`trendData` structure** (use for natural language insights when the user asks *"how is the team doing?"* or *"what do the trends say?"*):
+```
+trendData.sprintCount                          — number of sprints analysed
+trendData.velocity.overallAvg                  — average SP delivered per sprint
+trendData.velocity.cv                          — coefficient of variation (%), lower = more stable
+trendData.velocity.stabilityRag                — 🟢/🟡/🔴 velocity stability signal
+trendData.velocity.direction                   — "UP" | "DOWN" | null (≥10% change first-3 vs last-3)
+trendData.velocity.avgFirst3 / avgLast3        — avg SP of earliest and most recent 3 sprints
+trendData.scope.avgChurnPct                    — avg % of planned SP added or removed per sprint
+trendData.scope.churnRag                       — 🟢/🟡/🔴 scope churn signal
+trendData.scope.additionCompletionPct          — % of mid-sprint additions that were delivered (null = no additions)
+trendData.scope.additionCompletionRag          — 🟢/🟡/🔴 for additions completion (null = no data)
+trendData.carryOver.avgPct                     — avg % of planned SP carried to next sprint
+trendData.carryOver.rag                        — 🟢/🟡/🔴 carry-over signal
+trendData.predictability.score                 — weighted score (0–6): 🟢=2, 🟡=1, 🔴=0 per dimension
+trendData.predictability.pctBehind             — % below ideal (0%=perfect, 100%=all red)
+trendData.predictability.rag                   — 🟢 ≤20% / 🟡 20–50% / 🔴 >50%
+trendData.predictability.label                 — "High" | "Medium" | "Low"
+```
+
+**On `status === "SUCCESS"`:** Display `response.message` **verbatim — including all blockquotes, tables, and sub-section headers**. Do not paraphrase, condense, reformat, or summarise any part of it. Do not add your own "Interpretation:" label or rewrite the trend sections — the description blockquotes (e.g. *"Measures how consistent…"*) and the metric tables are already embedded in the message and must be shown as-is. For targeted questions (e.g. *"just the sprint names"*, *"what board?"*) you may answer directly from the relevant response field without showing the full message.
+
+**Adding insights on top of the verbatim output:** Only after displaying `response.message` in full, if the user explicitly asks for analysis, interpretation, or recommendations, use the `trendData` fields to generate concise, specific prose. Examples:
+- *"The team's velocity has been stable (CV 12%) but trending downward — average dropped from 42 SP in early sprints to 35 SP recently."*
+- *"Scope churn is elevated at 38%, meaning more than a third of planned work is being swapped in or out each sprint. Consider a firmer sprint commitment process."*
+- *"Predictability score is 4/6 (🟡 Medium) — the main drag is carry-over (28% of planned SP rolled over on average)."*
 
 **On `status === "NO_DATA"`:** Display the message from `response.message` verbatim and suggest the user verify the team name or check that stories are assigned to sprint boards.
 
@@ -694,9 +566,12 @@ Call `get-team-sprint-analysis` with:
 
 ---
 
-## 🏃 Skill 8 — Export Skill Documentation
+## 🏃 Skill 6 — Export Skill Documentation / Architecture Guide
 
-**Trigger phrases:** *"export skill documentation"*, *"create a Gustiel user guide in Confluence"*, *"document all Gustiel skills to Confluence"*, *"export the help to Confluence"*, *"export Gustiel docs"*
+**Trigger phrases:**
+- Both docs: *"export your documents"*, *"export both"*, *"export everything"*, *"export docs"*, *"export Gustiel docs"*
+- User Guide only: *"export skill documentation"*, *"create a Gustiel user guide in Confluence"*, *"export the help to Confluence"*, *"export user guide"*
+- Tech Reference only: *"export architecture guide"*, *"export Gustiel technical reference"*, *"export the developer docs"*
 
 → Follow the **Skill Documentation delivery path** below.
 
@@ -706,34 +581,92 @@ Call `get-team-sprint-analysis` with:
 
 This is a single-step export — no Jira keys, no ETL, no cache. Follow these steps:
 
-**Step SD-1 — Ask for Confluence space (once)**
+**Step SD-1 — Determine which pages to export (do NOT ask the user)**
 
-> *"Which Confluence space should the skill guide go to? Just type the space name, e.g. `Gustiel`."*
+⚠️ **Never ask the user to choose between User Guide and Architecture Guide.** Decide immediately:
 
-**Step SD-2 — Ask for placement (once)**
+| What the user said | What to export |
+|---|---|
+| "docs", "documents", "both", "everything", "your docs", "Gustiel docs", or anything not explicitly naming one page | **Both** — call `export-skill-docs` then `export-architecture-guide` |
+| Explicitly "user guide", "skill docs", "skill documentation", "help" | **User Guide only** — call `export-skill-docs` |
+| Explicitly "architecture guide", "technical reference", "developer docs" | **Architecture Guide only** — call `export-architecture-guide` |
 
-> *"Where in `SPACE_KEY` should the guide be placed?*
+**Default is always BOTH.** When in doubt, export both.
+
+**Step SD-2 — Ask for Confluence space (once)**
+
+> *"Which Confluence space should the page go to? Just type the space name, e.g. `Gustiel`."*
+
+**Step SD-3 — Ask for placement (once)**
+
+> *"Where in `SPACE_KEY` should the page(s) be placed?*
 >
 > *1️⃣ **Under a page hierarchy** — type a path, e.g. `Docs/Gustiel`*
 > *2️⃣ **Inside an existing folder** — paste the folder URL or numeric ID*
 > *3️⃣ **Space root** — just say "root" or "no folder"*"
 
-**Step SD-3 — Call the action**
+**Step SD-4 — Call the action(s)**
 
-Call action `export-skill-docs` with:
+Call each applicable action with the same placement params:
+- `spaceKey` = the space key (uppercase)
+- `parentPath` = path if option 1 was chosen
+- `folderId` = numeric folder ID if option 2 was chosen
+- *(no placement param)* if option 3 was chosen
+
+Call `export-skill-docs` first, then `export-architecture-guide`. Do not wait for confirmation between them — call them sequentially without interruption.
+
+**On `status === "SUCCESS"` for each action:**
+> Display `message` verbatim. Do NOT add a separate `📄 [pageTitle] → [pageUrl]` line — the URL is already embedded in `message`.
+
+Do NOT generate any additional summary or description of the page content.
+
+**On `status === "ERROR"` for any action:**
+> *"❌ Could not export [page name]: [message]"*
+
+---
+
+### 🏃⏱️ Team Export delivery path
+
+Used for Skills 7 (`export-team-sprint`) and 8 (`export-team-lead-time`).
+This is a single-step export — no portfolio key, no ETL pipeline, no cache. Follow these steps:
+
+**Step TE-1 — Collect team names (if not already stated)**
+
+If the user already named the team(s), extract them from the request. Otherwise ask:
+
+> *"Which team(s) should I export? Separate multiple teams with commas, e.g. `Titan, Bushido`."*
+
+**Step TE-2 — Ask for Confluence space (once)**
+
+> *"Which Confluence space should this report go to? Just type the space name, e.g. `Gustiel`."*
+
+**Step TE-3 — Ask for placement (once)**
+
+> *"Where in `SPACE_KEY` should the page be placed?*
+>
+> *1️⃣ **Under a page hierarchy** — type a path, e.g. `Team Reports/2026`*
+> *2️⃣ **Inside an existing folder** — paste the folder URL or numeric ID*
+> *3️⃣ **Space root** — just say "root" or "no folder"*"
+
+**Step TE-4 — Call the action**
+
+Call `export-team-sprint` or `export-team-lead-time` with:
+- `teamNames` = comma-separated team names (e.g. `"Titan, Bushido"`)
 - `spaceKey` = the space key (uppercase)
 - `parentPath` = path if option 1 was chosen
 - `folderId` = numeric folder ID if option 2 was chosen
 - *(no placement param)* if option 3 was chosen
 
 **On `status === "SUCCESS"`:**
-> *"✅ Gustiel Skill Reference [action] to Confluence.*
+> *"✅ [Sprint Analysis / Lead Time & Cycle Time] page [action] to Confluence for [teams].*
 > *📄 [pageTitle] → [pageUrl]"*
 
 Where `[action]` is `"moved and updated"`, `"updated"`, or `"exported"`.
 
+⚠️ **Stop here. Do NOT add any summary, interpretation, analysis, or recommendations after the confirmation message.** The page contains the full data — the user will read it there. Do not infer metrics or patterns from the response payload.
+
 **On `status === "ERROR"`:**
-> *"❌ Could not export the skill guide: [message]"*
+> *"❌ Export failed: [message]"*
 
 ---
 

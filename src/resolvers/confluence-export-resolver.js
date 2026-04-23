@@ -16,23 +16,37 @@
 
 import { storage }                                                                      from '@forge/api';
 import { getEnvFromJira, searchJira, getUserEmail, getCurrentAccountId }                  from '../services/jira-api-service.js';
-import { getSpaceByKey, findPageByTitle, createConfluencePage,
-         updateConfluencePage, createFolder, findFolderByTitle,
-         findOrCreatePageByPath }                                                   from '../services/confluence-api-service.js';
+import { resolveDestination, buildPageStorageBody,
+         upsertPage as upsertConfluencePage }                                       from '../services/confluence-page-service.js';
+import { getSpaceByKey, findFolderByTitle, createFolder }                           from '../services/confluence-api-service.js';
 import { PORTFOLIO_WORKFLOWS, REPORT_TIMEZONE,
          makeSessionKey }                                    from '../config/constants.js';
 import { extractItem, extractStoryStatus, chunk,
          extractItemScope }                                   from '../extractors/jira-extractor.js';
 import { groupByStatusOrdered, buildCountMap,
-         filterOverdue }                                     from '../transformers/portfolio-transformer.js';
+         filterOverdue, computeSprintTrends }                from '../transformers/portfolio-transformer.js';
 import { formatProgress, formatStatusTable,
          formatStoryStatusTable, formatInitiativeTable,
          formatEpicsByTeam,
          formatInnovationVelocityByTeam, formatLCTSection,
          formatSprintSection,
          EPIC_RYG_LEGEND }                                   from '../formatters/markdown-formatter.js';
-import { markdownToStorage, buildTocMacro,
-         buildAnchorMacro }                                   from '../formatters/confluence-formatter.js';
+
+
+// ── Private helper — builds a trendsByTeam map from sprintsByTeam ─────────────
+// Resolver is thin: just maps computeSprintTrends() across all teams.
+// Returns null when sprintsByTeam is null/empty.
+function buildTrendsByTeam(teams, sprintsByTeam) {
+    if (!sprintsByTeam || !teams || teams.length === 0) return null;
+    const result = {};
+    for (const team of teams) {
+        const data = sprintsByTeam[team];
+        if (!data || data.error || !Array.isArray(data.sprints)) continue;
+        const validSprints = data.sprints.filter(s => !s.error);
+        result[team] = computeSprintTrends(validSprints);
+    }
+    return result;
+}
 
 // ── Private helper — full ETL for one portfolio key ──────────────────────────
 // Returns { portfolioKey, objectiveTitle, markdown, counts, overdueCount }
@@ -135,7 +149,7 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
             '',
             '## 🏃 Sprint Analysis',
             '',
-            formatSprintSection(allTeamsE, sprintsByTeamE),
+            formatSprintSection(allTeamsE, sprintsByTeamE, buildTrendsByTeam(allTeamsE, sprintsByTeamE)),
             '',
             '[⬆ Back to top](#top)',
         ].join('\n');
@@ -181,16 +195,35 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
         }
         if (allTeamsI.length > 0) {
             try {
-                const cached = await storage.get(makeSessionKey(accountId, portfolioKey));
-                if (cached?.phase === 'complete' && (Date.now() - cached.timestamp) < 86_400_000) {
+                // Session is stored under whichever key was used with prepare-portfolio-export —
+                // typically the parent objective. Try parent first, fall back to own key.
+                const initiativeParentKey = extractItem(scopeItems[0], fields).parentKey;
+                const sessionKeys = [
+                    ...(initiativeParentKey ? [makeSessionKey(accountId, initiativeParentKey)] : []),
+                    makeSessionKey(accountId, portfolioKey),
+                ];
+                const sessions = [];
+                for (const sk of sessionKeys) {
+                    const s = await storage.get(sk);
+                    if (s) sessions.push(s);
+                }
+                // Sprint data: take from first session that has it (no TTL — historical)
+                const sprintSession = sessions.find(s => s.sprintsByTeam);
+                if (sprintSession) sprintsByTeamI = sprintSession.sprintsByTeam;
+                // LCT: only from a recent, complete session
+                const cached = sessions.find(s => s.phase === 'complete' && (Date.now() - s.timestamp) < 86_400_000) || null;
+                if (cached) {
                     lctReadyI = true;
                     for (const team of allTeamsI) {
                         const v = cached.velocityByTeam?.[team];
-                        if (teamStatsI[team] && v) { teamStatsI[team].velocity = { averageDays: v.averageDays, epicCount: v.epicCount, zeroTimeKeys: v.zeroTimeKeys || [] }; teamStatsI[team].inProgressCount = v.inProgressCount ?? 0; teamStatsI[team].doneCount = v.doneCount ?? 0; }
+                        if (teamStatsI[team] && v) {
+                            teamStatsI[team].velocity        = { averageDays: v.averageDays, epicCount: v.epicCount, zeroTimeKeys: v.zeroTimeKeys || [] };
+                            teamStatsI[team].inProgressCount = v.inProgressCount ?? 0;
+                            teamStatsI[team].doneCount       = v.doneCount ?? 0;
+                        }
                         if (teamStatsI[team] && cached.lctByTeam?.[team]) teamStatsI[team].lct = cached.lctByTeam[team];
                     }
                     teamStatsI._overall = cached.overallVelocity || null;
-                    sprintsByTeamI      = cached.sprintsByTeam   || null;
                 }
             } catch (_) { /* LCT will show "No data" */ }
         }
@@ -235,7 +268,7 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
             '',
             '## 🏃 Sprint Analysis',
             '',
-            formatSprintSection(allTeamsI, sprintsByTeamI),
+            formatSprintSection(allTeamsI, sprintsByTeamI, buildTrendsByTeam(allTeamsI, sprintsByTeamI)),
             '',
             '[⬆ Back to top](#top)',
         ].join('\n');
@@ -435,7 +468,7 @@ export const buildReportForKey = async (portfolioKey, quarters, env, accountId) 
         '',
         '## 🏃 Sprint Analysis',
         '',
-        formatSprintSection(allTeams, sprintsByTeam),
+        formatSprintSection(allTeams, sprintsByTeam, buildTrendsByTeam(allTeams, sprintsByTeam)),
         '',
         '[⬆ Back to top](#top)',
     ].join('\n');
@@ -462,32 +495,59 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
     const quarterLabel     = hasQuarterFilter ? ` — filtered by **${quarters.join(', ')}**` : '';
     const primaryKey       = allKeys[0];
 
-    // Fetch objective summary for each key (for titles)
-    const keyTitles = {};
+    // Fetch scope + parent key + title per key (single parallel batch — no extra round-trips)
+    const keyTitles   = {};
+    const scopeByKey  = {};
+    const parentByKey = {};
     await Promise.all(allKeys.map(async k => {
-        const items = await searchJira(`key = "${k}"`, ['summary']);
-        keyTitles[k] = items[0]?.fields?.summary || k;
+        const items = await searchJira(`key = "${k}"`, ['summary', 'issuetype', 'parent']);
+        keyTitles[k]  = items[0]?.fields?.summary || k;
+        if (items[0]) {
+            scopeByKey[k]  = extractItemScope(items[0]).scope;
+            parentByKey[k] = items[0].fields?.parent?.key || null;
+        }
     }));
 
-    // Layer 1: initiatives per key (run in parallel for speed)
-    const layer1PerKey = await Promise.all(
-        allKeys.map(k => searchJira(`(key = "${k}" OR parent = "${k}") ORDER BY issuetype DESC, status ASC`, fieldsToFetch))
-    );
+    // Route keys by scope: objective (or unknown) keys supply initiatives via children;
+    // initiative keys ARE Layer-1 items — their epics go straight to Layer 2.
+    const objectiveKeys  = allKeys.filter(k => scopeByKey[k] !== 'initiative');
+    const initiativeKeys = allKeys.filter(k => scopeByKey[k] === 'initiative');
 
-    // Combine all initiatives, tagging each with its sourceKey (the objective)
+    // Layer 1 — objective keys: fetch children → filter to non-key items = initiatives
+    const layer1PerObjective = objectiveKeys.length > 0
+        ? await Promise.all(objectiveKeys.map(k => searchJira(`(key = "${k}" OR parent = "${k}") ORDER BY issuetype DESC, status ASC`, fieldsToFetch)))
+        : [];
     let allInitiatives = [];
-    for (let i = 0; i < allKeys.length; i++) {
-        const k = allKeys[i];
-        const items = layer1PerKey[i].map(raw => extractItem(raw, fields));
+    for (let i = 0; i < objectiveKeys.length; i++) {
+        const k = objectiveKeys[i];
+        const items = layer1PerObjective[i].map(raw => extractItem(raw, fields));
         allInitiatives = allInitiatives.concat(items.filter(item => item.key !== k).map(item => ({ ...item, sourceKey: k })));
     }
+
+    // Layer 1 — initiative keys: initiative itself is the Layer-1 item; epics bypass Layer 2
+    let directEpics = [];
+    if (initiativeKeys.length > 0) {
+        await Promise.all(initiativeKeys.map(async k => {
+            const [initRaw, epicRaw] = await Promise.all([
+                searchJira(`key = "${k}"`, fieldsToFetch),
+                searchJira(`parent = "${k}" AND issuetype = Epic${quarterClause} ORDER BY status ASC`, fieldsToFetch),
+            ]);
+            const initItem = initRaw.map(r => extractItem(r, fields)).find(i => i.key === k);
+            if (initItem) allInitiatives.push({ ...initItem, sourceKey: k });
+            directEpics.push(...epicRaw.map(r => ({ ...extractItem(r, fields), sourceKey: k })));
+        }));
+    }
+
     if (allInitiatives.length === 0) return null;
 
-    // Layer 2: epics for all combined initiatives
-    const epicJql = `parent in (${allInitiatives.map(i => `"${i.key}"`).join(', ')}) AND issuetype = Epic${quarterClause} ORDER BY status ASC`;
+    // Layer 2: epics for initiatives that came from objective keys (initiative-key epics already collected)
     const initiativeToKey = Object.fromEntries(allInitiatives.map(i => [i.key, i.sourceKey]));
-    let allEpics = (await searchJira(epicJql, fieldsToFetch))
-        .map(raw => { const e = extractItem(raw, fields); return { ...e, sourceKey: initiativeToKey[e.parentKey] || primaryKey }; });
+    const objInitiatives  = allInitiatives.filter(i => objectiveKeys.includes(i.sourceKey));
+    let allEpics = objInitiatives.length > 0
+        ? (await searchJira(`parent in (${objInitiatives.map(i => `"${i.key}"`).join(', ')}) AND issuetype = Epic${quarterClause} ORDER BY status ASC`, fieldsToFetch))
+              .map(raw => { const e = extractItem(raw, fields); return { ...e, sourceKey: initiativeToKey[e.parentKey] || primaryKey }; })
+        : [];
+    allEpics = [...allEpics, ...directEpics];
 
     // Quarter filter: keep only initiatives that have qualifying epics
     const epicCountByInitiative = buildCountMap(allEpics, e => e.parentKey, e => e.statusCategoryKey === 'done');
@@ -548,9 +608,15 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
             teamStats[team] = { velocity: null, inProgressCount: 0, doneCount: 0, avgItemsPerEpic: avg, lct: null };
         }
         let combinedDays = 0, combinedCount = 0;
-        for (const key of allKeys) {
+        // For initiative keys, also try the parent (objective) session where LCT/Sprint is stored.
+        // Deduplicate so the same session is never read twice.
+        const sessionKeysToRead = [...new Set([
+            ...allKeys.map(k => makeSessionKey(accountId, k)),
+            ...allKeys.filter(k => parentByKey[k]).map(k => makeSessionKey(accountId, parentByKey[k])),
+        ])];
+        for (const sk of sessionKeysToRead) {
             try {
-                const cached = await storage.get(makeSessionKey(accountId, key));
+                const cached = await storage.get(sk);
                 if (!cached) continue;
 
                 // Sprint data: always read — historical metrics don't expire after 24h
@@ -635,7 +701,7 @@ export const buildMergedReport = async (allKeys, quarters, env, accountId) => {
         '',
         '## 🏃 Sprint Analysis',
         '',
-        formatSprintSection(allTeams, sprintsByTeam),
+        formatSprintSection(allTeams, sprintsByTeam, buildTrendsByTeam(allTeams, sprintsByTeam)),
         '',
         '[⬆ Back to top](#top)',
     ].join('\n');
@@ -764,93 +830,13 @@ export const exportToConfluence = async (event) => {
 
     // ── LOAD — Convert to Confluence storage format, then upsert page ──────
     try {
-        const space = await getSpaceByKey(spaceKey);
+        const storageBody = buildPageStorageBody(fullMarkdown);
 
-        // Prepend anchor + TOC macro.
-        // Heading structure: H1 = portfolio key title, H2 = sections, H3 = sub-sections, H4 = LCT teams.
-        // TOC covers levels 1–3; H4 team headings stay out of the TOC (they're fine inline).
-        const anchor      = buildAnchorMacro('top');
-        const toc         = buildTocMacro(1, 4);
-        const now         = new Date();
-        const createdAt   = new Intl.DateTimeFormat('en-CA', {
-            timeZone: REPORT_TIMEZONE,
-            year: 'numeric', month: '2-digit', day: '2-digit',
-            hour: '2-digit', minute: '2-digit', hour12: false,
-        }).format(now).replace(',', ''); // → "YYYY-MM-DD HH:MM"
-        const tzLabel     = new Intl.DateTimeFormat('en', { timeZone: REPORT_TIMEZONE, timeZoneName: 'short' })
-            .formatToParts(now).find(p => p.type === 'timeZoneName')?.value ?? REPORT_TIMEZONE;
-        const storageBody = `<p>${anchor}<em>📅 <strong>Created at:</strong> ${createdAt} ${tzLabel}</em></p>` + '\n' + toc + '\n<hr/>\n' + markdownToStorage(fullMarkdown);
+        // Resolve destination (folderId > newFolderTitle > parentPath > space root)
+        const { space, parentId, parentIsFolder } = await resolveDestination(spaceKey, folderId, newFolderTitle, parentPath);
 
-        // ── Resolve parentId ──────────────────────────────────────────────
-        // Priority: folderId > newFolderTitle > parentPath > none (space root)
-        let parentId       = null;
-        let parentIsFolder = false;
-
-        if (folderId) {
-            parentId       = folderId;
-            parentIsFolder = true;
-        } else if (newFolderTitle) {
-            // Try to create the folder. If Confluence rejects with 400 (name conflict),
-            // fall back to a title search so the same newFolderTitle can be reused on
-            // every re-export without the caller having to switch to folderId manually.
-            // Any other HTTP error (403, 422, 5xx …) is surfaced immediately with the
-            // real Confluence response so it is diagnosable.
-            try {
-                const folder = await createFolder(space.id, newFolderTitle);
-                parentId       = String(folder.id);
-                parentIsFolder = true;
-            } catch (folderErr) {
-                const errMsg    = folderErr?.message ?? String(folderErr);
-                const isConflict = /HTTP 400/i.test(errMsg) || /already exist/i.test(errMsg);
-
-                if (!isConflict) {
-                    // Not a name-conflict — surface the real Confluence error directly.
-                    throw new Error(`Could not create folder "${newFolderTitle}": ${errMsg}`);
-                }
-
-                // HTTP 400 → folder likely already exists; try to locate it by title.
-                const existing = await findFolderByTitle(space.id, spaceKey, newFolderTitle);
-                if (existing) {
-                    parentId       = String(existing.id);
-                    parentIsFolder = true;
-                } else {
-                    // Conflict but can't find it — surface the original error for diagnosis.
-                    throw new Error(
-                        `Could not create folder "${newFolderTitle}" (conflict) and could not locate it by title. ` +
-                        `Original error: ${errMsg}. ` +
-                        `Open the folder in Confluence, copy the numeric ID from the URL ` +
-                        `(e.g. /folder/52592641 → "52592641"), and re-export using folderId instead of newFolderTitle.`
-                    );
-                }
-            }
-        } else if (parentPath) {
-            parentId       = await findOrCreatePageByPath(space.id, parentPath);
-            parentIsFolder = false;
-        }
-
-        // ── Upsert logic (3-tier) — same for single-key and combined ────────
-        // 1. Scoped search → page exists at target location → update in-place.
-        // 2. Space-wide search → page exists elsewhere → MOVE + refresh content.
-        // 3. No match anywhere → create fresh page at target location.
-        // Same-day re-exports (individual or combined) always replace the existing page.
-        const existingAtTarget = await findPageByTitle(space.id, pageTitle, parentId, parentIsFolder);
-        let page, wasUpdated = false, wasMoved = false;
-
-        if (existingAtTarget) {
-            page       = await updateConfluencePage(existingAtTarget.id, existingAtTarget.version.number, space.id, pageTitle, storageBody);
-            wasUpdated = true;
-        } else {
-            const existingElsewhere = await findPageByTitle(space.id, pageTitle);
-            if (existingElsewhere) {
-                page       = await updateConfluencePage(existingElsewhere.id, existingElsewhere.version.number, space.id, pageTitle, storageBody, parentId || null);
-                wasUpdated = true;
-                wasMoved   = true;
-            } else {
-                page = await createConfluencePage(space.id, pageTitle, storageBody, parentId);
-            }
-        }
-
-        const pageUrl = `${env.baseUrl}/wiki${page._links?.webui || `/spaces/${spaceKey}/pages/${page.id}`}`;
+        // 3-tier upsert: update-in-place → move+update → create
+        const { pageUrl, wasUpdated, wasMoved } = await upsertConfluencePage(space, env, spaceKey, pageTitle, storageBody, parentId, parentIsFolder);
 
         return {
             status:           'SUCCESS',

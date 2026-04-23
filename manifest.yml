@@ -28,9 +28,12 @@ modules:
         - list-admins
         - clear-admin-registry
         - get-my-account-id
-        - analyze-portfolio-chat
         - get-team-sprint-analysis
+        - get-team-lead-time
+        - export-team-sprint
+        - export-team-lead-time
         - export-skill-docs
+        - export-architecture-guide
 
   function:
     - key: getAgentVersion
@@ -67,12 +70,18 @@ modules:
       handler: index.getMyAccountId
     - key: inspectStorage
       handler: index.inspectStorage
-    - key: chatAnalysisSection
-      handler: index.chatAnalysisSection
     - key: getTeamSprintAnalysis
       handler: index.getTeamSprintAnalysis
+    - key: getTeamLeadTime
+      handler: index.getTeamLeadTime
+    - key: exportTeamSprint
+      handler: index.exportTeamSprint
+    - key: exportTeamLeadTime
+      handler: index.exportTeamLeadTime
     - key: exportSkillDocs
       handler: index.exportSkillDocs
+    - key: exportArchitectureGuide
+      handler: index.exportArchitectureGuide
 
   action:
     - key: get-agent-version
@@ -275,6 +284,92 @@ modules:
           description: "The agile team name as it appears in the Jira Agile Team field (e.g. Titan, Comet, Vanguard)."
           required: true
 
+    - key: get-team-lead-time
+      function: getTeamLeadTime
+      name: Get Team Lead Time & Cycle Time
+      actionVerb: GET
+      description: "On-demand Lead Time / Cycle Time report for one or more agile teams (comma-separated). Analyzes completed items from the last 6 months; computes average lead time and cycle time by issue type. No portfolio key needed."
+      inputs:
+        teamNames:
+          title: Team Names
+          type: string
+          description: "One or more agile team names as they appear in the Jira Agile Team field. Separate multiple teams with commas (e.g. 'Titan, Bushido, Comet')."
+          required: true
+
+    - key: export-team-sprint
+      function: exportTeamSprint
+      name: Export Team Sprint Analysis to Confluence
+      actionVerb: GET
+      description: "Exports a Sprint Analysis Confluence page for one or more agile teams. Fetches the last 6 closed sprints, computes velocity, say/do ratio, rolled-over SP and trend analytics. Creates or updates the page in the target space."
+      inputs:
+        teamNames:
+          title: Team Names
+          type: string
+          description: "One or more agile team names (comma-separated, e.g. 'Titan, Bushido')."
+          required: true
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: "Target Confluence space key (e.g. PROJ)."
+          required: true
+        parentPath:
+          title: Parent Page Path
+          type: string
+          description: "Optional slash-separated path of existing pages under which to nest the exported page (e.g. 'Engineering / Team Reports')."
+          required: false
+        folderId:
+          title: Folder ID
+          type: string
+          description: "Optional numeric ID of an existing Confluence folder. Overrides parentPath."
+          required: false
+        newFolderTitle:
+          title: New Folder Title
+          type: string
+          description: "Optional title of a new Confluence folder to create (or locate if already exists)."
+          required: false
+        titleSuffix:
+          title: Title Suffix
+          type: string
+          description: "Optional label appended to the page title in place of the team name list."
+          required: false
+
+    - key: export-team-lead-time
+      function: exportTeamLeadTime
+      name: Export Team Lead Time & Cycle Time to Confluence
+      actionVerb: GET
+      description: "Exports a Lead Time / Cycle Time Confluence page for one or more agile teams. Analyzes completed items from the last 6 months, computes average lead time and cycle time by issue type. Creates or updates the page in the target space."
+      inputs:
+        teamNames:
+          title: Team Names
+          type: string
+          description: "One or more agile team names (comma-separated, e.g. 'Titan, Bushido')."
+          required: true
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: "Target Confluence space key (e.g. PROJ)."
+          required: true
+        parentPath:
+          title: Parent Page Path
+          type: string
+          description: "Optional slash-separated path of existing pages under which to nest the exported page."
+          required: false
+        folderId:
+          title: Folder ID
+          type: string
+          description: "Optional numeric ID of an existing Confluence folder. Overrides parentPath."
+          required: false
+        newFolderTitle:
+          title: New Folder Title
+          type: string
+          description: "Optional title of a new Confluence folder to create (or locate if already exists)."
+          required: false
+        titleSuffix:
+          title: Title Suffix
+          type: string
+          description: "Optional label appended to the page title in place of the team name list."
+          required: false
+
     - key: wipe-global-storage
       function: wipeGlobalStorage
       name: Wipe Global Storage
@@ -396,12 +491,12 @@ modules:
 
     - key: export-skill-docs
       function: exportSkillDocs
-      name: Export Skill Documentation
+      name: Export User Guide
       actionVerb: CREATE
       description: >-
-        Exports a comprehensive Confluence page documenting all Gustiel skills,
-        usage examples, access levels, and the ETL pipeline. No Jira data is
-        fetched — content is static documentation with dynamic version/env metadata.
+        Exports the Gustiel User Guide to Confluence — all skills in business-friendly
+        language with a DEV vs PROD orientation section and bundled screenshots.
+        No Jira data is fetched.
       inputs:
         spaceKey:
           title: Confluence Space Key
@@ -424,36 +519,34 @@ modules:
             Takes precedence over parentPath when provided.
           required: false
 
-    - key: analyze-portfolio-chat
-      function: chatAnalysisSection
-      name: Analyze Portfolio in Chat
-      actionVerb: GET
+    - key: export-architecture-guide
+      function: exportArchitectureGuide
+      name: Export Architecture Guide
+      actionVerb: CREATE
       description: >-
-        Delivers one paginated section of the portfolio analysis in chat.
-        Reads LCT, velocity, and story data from the per-user session cache.
-        Never re-runs extraction. Call once per NEXT confirmation.
-        Sections: summary, epic_teams, velocity_lct.
+        Exports the Gustiel Technical Reference to Confluence — a developer-focused
+        page containing the Technical Reference section from each skill doc plus the
+        full architecture document. No Jira data is fetched.
       inputs:
-        portfolioKey:
-          title: Portfolio Key
+        spaceKey:
+          title: Confluence Space Key
           type: string
-          description: The Jira key of the Objective, Initiative, or Epic to analyze (e.g. WX-1145).
+          description: The Confluence space key where the page will be created (e.g. GUSTIEL).
           required: true
-        section:
-          title: Section
+        parentPath:
+          title: Parent Page Path
           type: string
-          description: >-
-            Which section to deliver: "summary" (first call), "epic_teams"
-            (epics by team, paginated), or "velocity_lct" (velocity + LCT,
-            paginated). Follow nextSection from the previous response.
+          description: >
+            Optional. Slash-separated page hierarchy under which the page will be nested
+            (e.g. "Docs/Gustiel"). Pages are created if missing.
           required: false
-        teamOffset:
-          title: Team Offset
+        folderId:
+          title: Folder ID
           type: string
-          description: >-
-            Zero-based index of the first team to include in this batch.
-            Use 0 for the first call of a section; use nextTeamOffset from
-            the previous response for subsequent NEXT calls.
+          description: >
+            Optional. Numeric ID of an existing Confluence native folder.
+            Extract from the folder URL after /folder/ (e.g. "52592641").
+            Takes precedence over parentPath when provided.
           required: false
 
 
@@ -485,3 +578,4 @@ permissions:
     - read:space:confluence
     - read:folder:confluence
     - write:folder:confluence
+    - write:attachment:confluence

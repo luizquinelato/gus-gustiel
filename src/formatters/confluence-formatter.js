@@ -90,26 +90,34 @@ function parseTableRow(line) {
  * @returns {string}
  */
 /**
- * Background colours applied to the Status cell of epic tables.
+ * Background colours applied to the Status cell of status summary and epic tables.
  * Keyed by the exact Jira status name as it appears in the cell.
+ *
+ * Values are Confluence named highlight colours (not hex codes).
+ * Named colours are theme-aware in Confluence Cloud dark mode — they render
+ * with appropriate contrast in both light and dark themes.
+ * Hex codes bypass this mapping and always render as-is, causing light
+ * backgrounds with invisible light text in dark mode.
  */
 const STATUS_BG = {
-    'Backlog':                '#f0f0f0',   // light gray
-    'In Progress':            '#dbeafe',   // light blue
-    'Development':            '#dbeafe',   // light blue
-    'Deployed to Production': '#d1fae5',   // light green
-    'Released':               '#d1fae5',   // light green
+    'Backlog':                'light-grey',   // neutral / not started
+    'In Progress':            'light-blue',   // active
+    'Development':            'light-blue',   // active
+    'Deployed to Production': 'light-green',  // completed
+    'Released':               'light-green',  // completed
 };
 
 /**
  * Return attribute string for a <td> when the cell content matches a known
- * epic status.  Uses both the Confluence-native data-highlight-colour (which
- * survives the Cloud sanitiser) and a fallback inline style.
+ * status.  Uses the Confluence-native data-highlight-colour attribute which
+ * accepts named colours that adapt to dark mode.  No inline style fallback —
+ * named colours are not valid CSS colour values so the fallback would render
+ * as the wrong colour anyway.
  */
 function tdStyle(content) {
     const plain = content.trim();
     const bg    = STATUS_BG[plain];
-    return bg ? ` data-highlight-colour="${bg}" style="background-color: ${bg};"` : '';
+    return bg ? ` data-highlight-colour="${bg}"` : '';
 }
 
 /**
@@ -128,18 +136,20 @@ function cellToHtml(content) {
  */
 const WIDE_HEADERS = new Set(['Start', 'Due']);
 
-function renderTable(headers, bodyRows) {
+function renderTable(headers, bodyRows, { uniformColumns = false } = {}) {
     const n = headers.length;
 
     // Build the set of column indexes that should be wide (colspan=2).
-    // The first column is always wide; additionally any column whose header
-    // matches WIDE_HEADERS (e.g. "Start", "Due") gets the same treatment.
-    const wideIndexes = new Set(
-        headers.reduce((acc, h, i) => {
-            if (i === 0 || WIDE_HEADERS.has(h.trim())) acc.push(i);
-            return acc;
-        }, [])
-    );
+    // Skipped entirely when uniformColumns=true (e.g. documentation/reference tables
+    // where every column deserves equal width, such as the Architecture Guide).
+    const wideIndexes = uniformColumns
+        ? new Set()
+        : new Set(
+            headers.reduce((acc, h, i) => {
+                if (i === 0 || WIDE_HEADERS.has(h.trim())) acc.push(i);
+                return acc;
+            }, [])
+        );
 
     // Each wide column consumes 2 virtual columns; regular columns consume 1.
     const virtualCols = n === 1 ? 1 : n + wideIndexes.size;
@@ -232,9 +242,26 @@ export function buildCustomTable(headers, bodyRows, colspans) {
  *   plain text               → <p>…</p>
  *
  * @param {string} markdown
+ * @param {object} [options]
+ * @param {boolean} [options.uniformColumns=false] - When true, all table columns
+ *   get equal width (no colspan widening). Use for documentation/reference tables
+ *   (e.g. Architecture Guide) where no single column deserves extra width.
+ *   Default (false) widens the first column and any "Start"/"Due" columns.
  * @returns {string} Confluence storage format HTML string
  */
-export function markdownToStorage(markdown) {
+
+// Map common fenced-code-block language hints to Confluence-supported identifiers.
+const LANG_MAP = {
+    js: 'javascript', javascript: 'javascript', ts: 'javascript', typescript: 'javascript',
+    java: 'java', python: 'python', py: 'python', bash: 'bash', sh: 'bash',
+    sql: 'sql', yaml: 'none', yml: 'none', json: 'javascript', css: 'css',
+    html: 'html/xml', xml: 'html/xml', powershell: 'powershell', ps1: 'powershell',
+};
+
+export function markdownToStorage(markdown, { uniformColumns = false } = {}) {
+    // Normalize line endings — docs may originate from Windows (CRLF) or Unix (LF).
+    markdown = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
     const lines = markdown.split('\n');
     const html  = [];
     let i = 0;
@@ -333,12 +360,48 @@ export function markdownToStorage(markdown) {
                 bodyRows.push(parseTableRow(lines[i]));
                 i++;
             }
-            html.push(renderTable(headers, bodyRows));
+            html.push(renderTable(headers, bodyRows, { uniformColumns }));
+            continue;
+        }
+
+        // Fenced code block: ``` (with optional language hint) … ```
+        // Rendered using Confluence's native code macro with CDATA body.
+        if (trimmed.startsWith('```')) {
+            const rawLang = trimmed.slice(3).trim().toLowerCase();
+            const lang    = LANG_MAP[rawLang] || 'none';
+            i++; // skip opening fence
+            const codeLines = [];
+            while (i < lines.length && !lines[i].trim().startsWith('```')) {
+                codeLines.push(lines[i]);
+                i++;
+            }
+            i++; // skip closing fence
+            const codeContent = codeLines.join('\n');
+            // Escape sequences that would break CDATA: ]]> and <ac: / </ac:
+            const safeCdata = codeContent
+                .replace(/\]\]>/g,     ']\u200B]>')
+                .replace(/<(\/?)ac:/g, '<\u200B$1ac:');
+            html.push(
+                `<ac:structured-macro ac:name="code" ac:schema-version="1">` +
+                `<ac:parameter ac:name="language">${lang}</ac:parameter>` +
+                `<ac:plain-text-body><![CDATA[${safeCdata}]]></ac:plain-text-body>` +
+                `</ac:structured-macro>`
+            );
             continue;
         }
 
         // Empty line — skip (Confluence renders vertical space automatically)
         if (trimmed === '') { i++; continue; }
+
+        // Inline image with ATTACH: prefix → Confluence attachment image macro
+        // Syntax: ![alt](ATTACH:filename.png)
+        // Renders as a Confluence attachment inline image (no external URL needed).
+        const attachMatch = trimmed.match(/^!\[([^\]]*)\]\(ATTACH:([^)]+)\)$/);
+        if (attachMatch) {
+            const filename = attachMatch[2].trim();
+            html.push(`<ac:image ac:align="center"><ri:attachment ri:filename="${filename}"/></ac:image>`);
+            i++; continue;
+        }
 
         // Paragraph
         html.push(`<p>${inlineToHtml(line)}</p>`);

@@ -13,6 +13,7 @@
  *   createFolder(spaceId, title, parentId?)               → { id, type, ... }
  *   findFolderByTitle(spaceKey, title)                    → { id, title } | null
  *   findOrCreatePageByPath(spaceId, pathString)           → parentId string | null
+ *   uploadAttachment(pageId, filename, base64Data, mimeType?) → Confluence API response
  *
  * NOTE on folder support:
  *   The Confluence v2 API does NOT provide a way to search/list folders by title.
@@ -124,6 +125,7 @@ export async function createConfluencePage(spaceId, title, storageBody, parentId
 
     if (!response.ok) {
         const errText = await response.text().catch(() => 'unknown error');
+        console.error(`[createConfluencePage] HTTP ${response.status} for "${title}": ${errText}`);
         throw new Error(`Failed to create Confluence page: HTTP ${response.status} — ${errText}`);
     }
 
@@ -310,3 +312,52 @@ export async function findOrCreatePageByPath(spaceId, pathString) {
     return parentId;
 }
 
+/**
+ * Upload a file as an attachment to an existing Confluence page.
+ *
+ * If an attachment with the same filename already exists on the page,
+ * Confluence replaces it (idempotent when called after page upsert).
+ *
+ * @param {string} pageId     - Numeric Confluence page ID
+ * @param {string} filename   - Filename as it should appear in Confluence (e.g. "screenshot.png")
+ * @param {string} base64Data - Base64-encoded file content
+ * @param {string} [mimeType] - MIME type (default: "image/png")
+ * @returns {Promise<object>}  Confluence API response body
+ * @throws {Error} if the upload fails
+ */
+export async function uploadAttachment(pageId, filename, base64Data, mimeType = 'image/png') {
+    // Decode base64 → binary
+    const binaryStr = atob(base64Data);
+    const bytes     = new Uint8Array(binaryStr.length);
+    for (let idx = 0; idx < binaryStr.length; idx++) {
+        bytes[idx] = binaryStr.charCodeAt(idx);
+    }
+
+    const blob     = new Blob([bytes], { type: mimeType });
+    const formData = new FormData();
+    formData.append('file', blob, filename);
+
+    // Upload via v1 REST multipart endpoint using asApp() + write:confluence-file (classic scope).
+    // Auth history:
+    //   asApp()  + v1 + granular scope only          → 401 "scope does not match" (granular scopes map to v2 only)
+    //   asUser() + v1                                 → "Authentication Required" (v1 rejects OAuth Bearer tokens)
+    //   asUser() + v2                                 → fails (v2 has no POST /pages/{id}/attachments endpoint)
+    //   asApp()  + v1 + write:confluence-content      → 401 "scope does not match" (wrong classic scope; that's for page content)
+    //   asApp()  + v1 + write:confluence-file         → correct: Atlassian docs confirm this is the classic scope for attachment uploads
+    // X-Atlassian-Token: nocheck is the mandatory CSRF bypass header for v1 multipart uploads.
+    const response = await asApp().requestConfluence(
+        route`/wiki/rest/api/content/${pageId}/child/attachment`,
+        {
+            method:  'POST',
+            headers: { 'X-Atlassian-Token': 'nocheck' },
+            body:    formData,
+        }
+    );
+
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`Attachment upload failed for "${filename}": HTTP ${response.status} — ${text}`);
+    }
+
+    return response.json();
+}

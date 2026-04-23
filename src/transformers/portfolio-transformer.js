@@ -717,6 +717,8 @@ export function parseGreenHopperSprintReport(report, sprint) {
     let removed = 0,   removedNoSp = 0;   // currentEstimateStatistic of punted
     let added = 0,     addedNoSp = 0;     // currentEstimateStatistic of mid-sprint added
     let finalOriginal = 0;                // currentEstimateStatistic of NON-added items
+    let addedCompleted = 0;               // SP of mid-sprint additions that were completed
+    let addedNotCompleted = 0;            // SP of mid-sprint additions that were NOT completed
 
     for (const issue of (contents.completedIssues || [])) {
         const cur = getSp(issue, 'currentEstimateStatistic');
@@ -724,6 +726,7 @@ export function parseGreenHopperSprintReport(report, sprint) {
         if (isNoSp(issue, 'currentEstimateStatistic')) velocityNoSp++;
         if (addedKeys.has(issue.key)) {
             added += cur;
+            addedCompleted += cur;
             if (isNoSp(issue, 'currentEstimateStatistic')) addedNoSp++;
         } else {
             planned += getSp(issue, 'estimateStatistic');
@@ -738,6 +741,7 @@ export function parseGreenHopperSprintReport(report, sprint) {
         if (isNoSp(issue, 'currentEstimateStatistic')) rolledOverNoSp++;
         if (addedKeys.has(issue.key)) {
             added += cur;
+            addedNotCompleted += cur;
             if (isNoSp(issue, 'currentEstimateStatistic')) addedNoSp++;
         } else {
             planned += getSp(issue, 'estimateStatistic');
@@ -752,6 +756,7 @@ export function parseGreenHopperSprintReport(report, sprint) {
         if (isNoSp(issue, 'currentEstimateStatistic')) removedNoSp++;
         if (addedKeys.has(issue.key)) {
             added += cur;
+            addedNotCompleted += cur;
             if (isNoSp(issue, 'currentEstimateStatistic')) addedNoSp++;
         } else {
             planned += getSp(issue, 'estimateStatistic');
@@ -765,21 +770,134 @@ export function parseGreenHopperSprintReport(report, sprint) {
     const reEstimDelta = Math.round(finalOriginal) - plannedR; // +ve = re-estimated up
 
     return {
-        id:             sprint.id,
-        name:           sprint.name,
-        endDate:        sprint.endDate,
-        planned:        plannedR,
+        id:               sprint.id,
+        name:             sprint.name,
+        endDate:          sprint.endDate,
+        planned:          plannedR,
         plannedNoSp,
-        added:          Math.round(added),
+        added:            Math.round(added),
         addedNoSp,
-        removed:        Math.round(removed),
+        addedCompleted:   Math.round(addedCompleted),
+        addedNotCompleted: Math.round(addedNotCompleted),
+        removed:          Math.round(removed),
         removedNoSp,
-        completed:      Math.round(velocity),
+        completed:        Math.round(velocity),
         velocityNoSp,
-        rolledOver:     Math.round(rolledOver),
+        rolledOver:       Math.round(rolledOver),
         rolledOverNoSp,
         sayDo,
-        sayDoRag:       sayDo >= 0.8 ? '🟢' : sayDo >= 0.5 ? '🟡' : '🔴',
+        sayDoRag:         sayDo >= 0.8 ? '🟢' : sayDo >= 0.5 ? '🟡' : '🔴',
         reEstimDelta,
+    };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// computeSprintTrends — pure function, no I/O
+//
+// Calculates three advanced metrics for a team's recent sprints:
+//   1. Velocity Trend  — stability + direction (first-3 vs last-3, ≥10% = signal)
+//   2. Scope Management — churn rate + additions completion rate
+//   3. Predictability Score — weighted: 🟢=2 · 🟡=1 · 🔴=0 · max=6
+//
+// Requires at least MIN_SPRINTS valid (non-error) sprints.
+// Returns null when insufficient data.
+// ─────────────────────────────────────────────────────────────────────────────
+const MIN_SPRINTS_FOR_TRENDS = 5;
+const VELOCITY_DIRECTION_THRESHOLD = 0.10; // 10% change between first-3 and last-3 avg
+
+export function computeSprintTrends(sprints) {
+    if (!sprints || !Array.isArray(sprints)) return null;
+
+    const valid = sprints.filter(s => !s.error);
+    if (valid.length < MIN_SPRINTS_FOR_TRENDS) return null;
+
+    // ── 1. VELOCITY TREND ──────────────────────────────────────────────────
+    const velocities    = valid.map(s => s.completed);
+    const avg           = arr => arr.reduce((a, v) => a + v, 0) / arr.length;
+    const overallAvgVel = avg(velocities);
+
+    // Coefficient of variation: stddev / mean — measures spread around mean
+    const variance   = avg(velocities.map(v => Math.pow(v - overallAvgVel, 2)));
+    const stddev     = Math.sqrt(variance);
+    const cv         = overallAvgVel > 0 ? stddev / overallAvgVel : 0;
+
+    // Stability signal: CV ≤15% → 🟢, ≤30% → 🟡, >30% → 🔴
+    const velocityStabilityRag = cv <= 0.15 ? '🟢' : cv <= 0.30 ? '🟡' : '🔴';
+
+    // Direction: compare avg of first-3 vs avg of last-3
+    const first3    = valid.slice(0, 3).map(s => s.completed);
+    const last3     = valid.slice(-3).map(s => s.completed);
+    const avgFirst3 = avg(first3);
+    const avgLast3  = avg(last3);
+    let   velocityDirection = null; // null means no signal (noise)
+    if (avgFirst3 > 0) {
+        const pctChange = (avgLast3 - avgFirst3) / avgFirst3;
+        if (Math.abs(pctChange) >= VELOCITY_DIRECTION_THRESHOLD) {
+            velocityDirection = pctChange > 0 ? 'UP' : 'DOWN';
+        }
+    }
+
+    // ── 2. SCOPE MANAGEMENT ───────────────────────────────────────────────
+    const sprintsWithPlanned = valid.filter(s => s.planned > 0);
+
+    // Churn rate: (added + removed) / planned — per sprint, then average
+    const avgChurnRate = sprintsWithPlanned.length > 0
+        ? avg(sprintsWithPlanned.map(s => (s.added + s.removed) / s.planned))
+        : 0;
+    // Churn RAG: ≤20% → 🟢, ≤40% → 🟡, >40% → 🔴
+    const scopeChurnRag = avgChurnRate <= 0.20 ? '🟢' : avgChurnRate <= 0.40 ? '🟡' : '🔴';
+
+    // Additions completion rate: addedCompleted / (addedCompleted + addedNotCompleted)
+    const totalAddedCompleted    = valid.reduce((a, s) => a + (s.addedCompleted    || 0), 0);
+    const totalAddedNotCompleted = valid.reduce((a, s) => a + (s.addedNotCompleted || 0), 0);
+    const totalAdded             = totalAddedCompleted + totalAddedNotCompleted;
+    const additionCompletionRate = totalAdded > 0 ? totalAddedCompleted / totalAdded : null;
+    // Addition completion RAG: ≥70% → 🟢, ≥40% → 🟡, <40% → 🔴 (null = no data, treated as 🟡)
+    const additionCompletionRag  = additionCompletionRate === null ? null
+        : additionCompletionRate >= 0.70 ? '🟢'
+        : additionCompletionRate >= 0.40 ? '🟡'
+        : '🔴';
+
+    // ── 3. CARRY-OVER (for predictability) ───────────────────────────────
+    const avgCarryOverRate = sprintsWithPlanned.length > 0
+        ? avg(sprintsWithPlanned.map(s => s.rolledOver / s.planned))
+        : 0;
+    // Carry-over RAG: ≤10% → 🟢, ≤25% → 🟡, >25% → 🔴
+    const carryOverRag = avgCarryOverRate <= 0.10 ? '🟢' : avgCarryOverRate <= 0.25 ? '🟡' : '🔴';
+
+    // ── 4. PREDICTABILITY SCORE ────────────────────────────────────────────
+    // Weights: 🟢=2 · 🟡=1 · 🔴=0 · max=6
+    const ragWeight = rag => rag === '🟢' ? 2 : rag === '🟡' ? 1 : 0;
+    const score     = ragWeight(velocityStabilityRag) + ragWeight(carryOverRag) + ragWeight(scopeChurnRag);
+    const pctBehind = Math.round((6 - score) / 6 * 100);
+    const predictabilityRag  = pctBehind <= 20 ? '🟢' : pctBehind <= 50 ? '🟡' : '🔴';
+    const predictabilityLabel = pctBehind <= 20 ? 'High' : pctBehind <= 50 ? 'Medium' : 'Low';
+
+    return {
+        sprintCount: valid.length,
+        velocity: {
+            overallAvg:  Math.round(overallAvgVel),
+            cv:          Math.round(cv * 100),        // percentage
+            stabilityRag: velocityStabilityRag,
+            direction:   velocityDirection,           // 'UP' | 'DOWN' | null
+            avgFirst3:   Math.round(avgFirst3),
+            avgLast3:    Math.round(avgLast3),
+        },
+        scope: {
+            avgChurnPct:           Math.round(avgChurnRate * 100),
+            churnRag:              scopeChurnRag,
+            additionCompletionPct: additionCompletionRate !== null ? Math.round(additionCompletionRate * 100) : null,
+            additionCompletionRag,
+        },
+        carryOver: {
+            avgPct: Math.round(avgCarryOverRate * 100),
+            rag:    carryOverRag,
+        },
+        predictability: {
+            score,
+            pctBehind,
+            rag:   predictabilityRag,
+            label: predictabilityLabel,
+        },
     };
 }
