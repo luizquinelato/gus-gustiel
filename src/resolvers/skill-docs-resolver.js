@@ -88,7 +88,7 @@ export const exportSkillDocs = async (event) => {
     const pageTitle = `📖 [${today}] Gustiel User Guide${byClause}`;
 
     const rawMarkdown = buildUserGuideMarkdown(env.name);
-    const fullContent = markdownToStorage(rawMarkdown);
+    const fullContent = markdownToStorage(rawMarkdown, { uniformColumns: true });
 
     try {
         const space = await getSpaceByKey(spaceKey);

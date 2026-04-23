@@ -55,7 +55,7 @@ export const exportArchitectureGuide = async (event) => {
     const pageTitle = `🏗️ [${today}] Gustiel Technical Reference${byClause}`;
 
     const rawMarkdown = buildTechRefMarkdown(env.name);
-    const fullContent = markdownToStorage(rawMarkdown);
+    const fullContent = markdownToStorage(rawMarkdown, { uniformColumns: true });
 
     try {
         const space = await getSpaceByKey(spaceKey);
@@ -73,6 +73,10 @@ export const exportArchitectureGuide = async (event) => {
         const storageBody =
             `<p>${anchor}<em>📅 <strong>Created at:</strong> ${createdAt} ${tzLabel}</em></p>\n` +
             toc + '\n<hr/>\n' + fullContent;
+
+        console.log(`[exportArchGuide] storageBody length: ${storageBody.length}`);
+        console.log(`[exportArchGuide] first 300 chars: ${storageBody.slice(0, 300)}`);
+        console.log(`[exportArchGuide] last 200 chars: ${storageBody.slice(-200)}`);
 
         // ── Resolve parentId ──────────────────────────────────────────────────
         let parentId = null, parentIsFolder = false;
@@ -98,7 +102,11 @@ export const exportArchitectureGuide = async (event) => {
                 wasUpdated = true;
                 wasMoved   = true;
             } else {
-                page = await createConfluencePage(space.id, pageTitle, storageBody, parentId);
+                // v2 POST /pages applies strict Fabric editor validation on CREATE.
+                // v2 PUT /pages/{id} is more lenient (handles legacy content on update).
+                // Workaround: create a stub page first, then update with the real content.
+                const stub = await createConfluencePage(space.id, pageTitle, '<p>Generating…</p>', parentId);
+                page = await updateConfluencePage(stub.id, 1, space.id, pageTitle, storageBody, parentId || null);
             }
         }
 

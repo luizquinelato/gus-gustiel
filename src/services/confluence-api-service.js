@@ -125,6 +125,7 @@ export async function createConfluencePage(spaceId, title, storageBody, parentId
 
     if (!response.ok) {
         const errText = await response.text().catch(() => 'unknown error');
+        console.error(`[createConfluencePage] HTTP ${response.status} for "${title}": ${errText}`);
         throw new Error(`Failed to create Confluence page: HTTP ${response.status} — ${errText}`);
     }
 
@@ -336,8 +337,14 @@ export async function uploadAttachment(pageId, filename, base64Data, mimeType = 
     const formData = new FormData();
     formData.append('file', blob, filename);
 
-    // v1 REST API is the documented multipart upload path for attachments.
-    // The v2 endpoint does not reliably resolve ri:attachment references in the Fabric editor.
+    // Upload via v1 REST multipart endpoint using asApp() + write:confluence-file (classic scope).
+    // Auth history:
+    //   asApp()  + v1 + granular scope only          → 401 "scope does not match" (granular scopes map to v2 only)
+    //   asUser() + v1                                 → "Authentication Required" (v1 rejects OAuth Bearer tokens)
+    //   asUser() + v2                                 → fails (v2 has no POST /pages/{id}/attachments endpoint)
+    //   asApp()  + v1 + write:confluence-content      → 401 "scope does not match" (wrong classic scope; that's for page content)
+    //   asApp()  + v1 + write:confluence-file         → correct: Atlassian docs confirm this is the classic scope for attachment uploads
+    // X-Atlassian-Token: nocheck is the mandatory CSRF bypass header for v1 multipart uploads.
     const response = await asApp().requestConfluence(
         route`/wiki/rest/api/content/${pageId}/child/attachment`,
         {

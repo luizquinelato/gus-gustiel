@@ -136,18 +136,20 @@ function cellToHtml(content) {
  */
 const WIDE_HEADERS = new Set(['Start', 'Due']);
 
-function renderTable(headers, bodyRows) {
+function renderTable(headers, bodyRows, { uniformColumns = false } = {}) {
     const n = headers.length;
 
     // Build the set of column indexes that should be wide (colspan=2).
-    // The first column is always wide; additionally any column whose header
-    // matches WIDE_HEADERS (e.g. "Start", "Due") gets the same treatment.
-    const wideIndexes = new Set(
-        headers.reduce((acc, h, i) => {
-            if (i === 0 || WIDE_HEADERS.has(h.trim())) acc.push(i);
-            return acc;
-        }, [])
-    );
+    // Skipped entirely when uniformColumns=true (e.g. documentation/reference tables
+    // where every column deserves equal width, such as the Architecture Guide).
+    const wideIndexes = uniformColumns
+        ? new Set()
+        : new Set(
+            headers.reduce((acc, h, i) => {
+                if (i === 0 || WIDE_HEADERS.has(h.trim())) acc.push(i);
+                return acc;
+            }, [])
+        );
 
     // Each wide column consumes 2 virtual columns; regular columns consume 1.
     const virtualCols = n === 1 ? 1 : n + wideIndexes.size;
@@ -240,10 +242,23 @@ export function buildCustomTable(headers, bodyRows, colspans) {
  *   plain text               → <p>…</p>
  *
  * @param {string} markdown
+ * @param {object} [options]
+ * @param {boolean} [options.uniformColumns=false] - When true, all table columns
+ *   get equal width (no colspan widening). Use for documentation/reference tables
+ *   (e.g. Architecture Guide) where no single column deserves extra width.
+ *   Default (false) widens the first column and any "Start"/"Due" columns.
  * @returns {string} Confluence storage format HTML string
  */
 
-export function markdownToStorage(markdown) {
+// Map common fenced-code-block language hints to Confluence-supported identifiers.
+const LANG_MAP = {
+    js: 'javascript', javascript: 'javascript', ts: 'javascript', typescript: 'javascript',
+    java: 'java', python: 'python', py: 'python', bash: 'bash', sh: 'bash',
+    sql: 'sql', yaml: 'none', yml: 'none', json: 'javascript', css: 'css',
+    html: 'html/xml', xml: 'html/xml', powershell: 'powershell', ps1: 'powershell',
+};
+
+export function markdownToStorage(markdown, { uniformColumns = false } = {}) {
     // Normalize line endings — docs may originate from Windows (CRLF) or Unix (LF).
     markdown = markdown.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
@@ -345,15 +360,15 @@ export function markdownToStorage(markdown) {
                 bodyRows.push(parseTableRow(lines[i]));
                 i++;
             }
-            html.push(renderTable(headers, bodyRows));
+            html.push(renderTable(headers, bodyRows, { uniformColumns }));
             continue;
         }
 
         // Fenced code block: ``` (with optional language hint) … ```
-        // Rendered as a plain <pre> block (HTML-escaped) — avoids the Confluence
-        // Fabric editor's macro validation that rejects <ac:structured-macro name="code">
-        // with HTTP 400 "Content contains unsupported extensions".
+        // Rendered using Confluence's native code macro with CDATA body.
         if (trimmed.startsWith('```')) {
+            const rawLang = trimmed.slice(3).trim().toLowerCase();
+            const lang    = LANG_MAP[rawLang] || 'none';
             i++; // skip opening fence
             const codeLines = [];
             while (i < lines.length && !lines[i].trim().startsWith('```')) {
@@ -361,11 +376,17 @@ export function markdownToStorage(markdown) {
                 i++;
             }
             i++; // skip closing fence
-            const codeContent = codeLines.join('\n')
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
-            html.push(`<pre>${codeContent}</pre>`);
+            const codeContent = codeLines.join('\n');
+            // Escape sequences that would break CDATA: ]]> and <ac: / </ac:
+            const safeCdata = codeContent
+                .replace(/\]\]>/g,     ']\u200B]>')
+                .replace(/<(\/?)ac:/g, '<\u200B$1ac:');
+            html.push(
+                `<ac:structured-macro ac:name="code" ac:schema-version="1">` +
+                `<ac:parameter ac:name="language">${lang}</ac:parameter>` +
+                `<ac:plain-text-body><![CDATA[${safeCdata}]]></ac:plain-text-body>` +
+                `</ac:structured-macro>`
+            );
             continue;
         }
 
@@ -378,7 +399,7 @@ export function markdownToStorage(markdown) {
         const attachMatch = trimmed.match(/^!\[([^\]]*)\]\(ATTACH:([^)]+)\)$/);
         if (attachMatch) {
             const filename = attachMatch[2].trim();
-            html.push(`<ac:image><ri:attachment ri:filename="${filename}"/></ac:image>`);
+            html.push(`<ac:image ac:align="center"><ri:attachment ri:filename="${filename}"/></ac:image>`);
             i++; continue;
         }
 

@@ -616,8 +616,7 @@ Call each applicable action with the same placement params:
 Call `export-skill-docs` first, then `export-architecture-guide`. Do not wait for confirmation between them — call them sequentially without interruption.
 
 **On `status === "SUCCESS"` for each action:**
-> Display `message` verbatim, then show the URL:
-> *"📄 [pageTitle] → [pageUrl]"*
+> Display `message` verbatim. Do NOT add a separate `📄 [pageTitle] → [pageUrl]` line — the URL is already embedded in `message`.
 
 Do NOT generate any additional summary or description of the page content.
 

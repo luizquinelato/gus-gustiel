@@ -467,6 +467,7 @@ The anchor macro at position 1 is what the `[⬆ Back to top](#top)` links throu
 | `- item` / `* item` | `<ul><li>…</li></ul>` (consecutive items merged into one list; no inner `<p>` to preserve bullet styling) |
 | `\| table \|` | `renderTable(headers, bodyRows)` — full Confluence XHTML table |
 | `[⬆ Back to top](#top)` | Right-aligned `<p style="text-align:right;"><a href="#top">` |
+| `![alt](ATTACH:filename.png)` | `<ac:image ac:align="center"><ri:attachment ri:filename="…"/></ac:image>` — centered Confluence attachment image (file must be uploaded first) |
 | `**bold**` | `<strong>` |
 | `[link](url)` | `<a href="…">` |
 | `_italic_` | `<em>` |
@@ -522,6 +523,27 @@ Destination is resolved in this priority order:
 - Space root (if neither is provided)
 
 The page title always includes the current date in `REPORT_TIMEZONE` (BRT) for traceability. An optional `titleSuffix` field prevents page overwrites when multiple individual keys share the same destination folder.
+
+### Attachment Upload (Two-Step Flow)
+
+When a page body contains `![alt](ATTACH:filename.png)` references, the attachment must be uploaded **before** Confluence can resolve it. `skill-docs-resolver.js` implements this as a mandatory two-step flow:
+
+1. **Upsert the page** — create or update with the full body (including `<ac:image>` tags that still say "Preview unavailable" at this point).
+2. **Upload each attachment** — call `uploadAttachment(pageId, filename, base64Data)` for every screenshot in `SCREENSHOTS`. On success, Confluence stores the binary file against the page ID.
+3. **Re-PUT the page body** — a second `updateConfluencePage` call with the identical body forces Confluence to re-resolve all `<ri:attachment>` references now that the files exist. Without this step the images remain "Preview unavailable" even after upload.
+
+#### `uploadAttachment` — Implementation Notes
+
+| Decision | Value | Why |
+|---|---|---|
+| **API version** | v1 (`/wiki/rest/api/content/{id}/child/attachment`) | v2 has no `POST /pages/{id}/attachments` endpoint |
+| **Auth context** | `asApp()` | `asUser()` returns "Authentication Required" in Forge backend resolvers; v1 rejects OAuth Bearer tokens |
+| **Scope** | `write:confluence-file` (classic) | The only Atlassian scope that authorises attachment uploads; `write:confluence-content` (page content) and `write:attachment:confluence` (granular, v2-only) both fail with "scope does not match" |
+| **CSRF bypass** | `X-Atlassian-Token: nocheck` | Required for all v1 multipart `POST` requests; without it Confluence returns 403 |
+| **Body** | Native `FormData` with `Blob` | `atob(base64Data)` → `Uint8Array` → `Blob` → `formData.append('file', blob, filename)` |
+| **Image alignment** | `ac:align="center"` on `<ac:image>` | Standard Confluence storage attribute for centered image rendering |
+
+> **Scope pitfall**: `write:confluence-file` is a distinct scope from `write:confluence-content`. The former grants file/attachment upload rights; the latter grants page content write rights. They are not interchangeable and both must be declared in `manifest.yml` if both operations are needed.
 
 ### Report Metadata
 
