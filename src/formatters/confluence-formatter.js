@@ -270,6 +270,7 @@ export function markdownToStorage(markdown, { uniformColumns = false } = {}) {
     let h2Counter = 0;     // resets on each H1
     let h3Counter = 0;     // resets on each H2
     let h4Counter = 0;     // resets on each H3
+    let nextTableUniform = false;  // set by <!--uniform--> marker; consumed by next table
 
     while (i < lines.length) {
         const line    = lines[i];
@@ -351,6 +352,10 @@ export function markdownToStorage(markdown, { uniformColumns = false } = {}) {
             i++; continue;
         }
 
+        // Per-table uniform-columns marker — consumed without emitting any HTML.
+        // Causes the next table to be rendered with all columns the same width.
+        if (trimmed === '<!--uniform-->') { nextTableUniform = true; i++; continue; }
+
         // Table: current line starts with '|' and next line is a separator (|---|)
         if (line.startsWith('|') && i + 1 < lines.length && /^\|[\s\-:|]+\|/.test(lines[i + 1])) {
             const headers = parseTableRow(line);
@@ -360,7 +365,9 @@ export function markdownToStorage(markdown, { uniformColumns = false } = {}) {
                 bodyRows.push(parseTableRow(lines[i]));
                 i++;
             }
-            html.push(renderTable(headers, bodyRows, { uniformColumns }));
+            const tableUniform = uniformColumns || nextTableUniform;
+            nextTableUniform = false;
+            html.push(renderTable(headers, bodyRows, { uniformColumns: tableUniform }));
             continue;
         }
 

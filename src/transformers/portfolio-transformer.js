@@ -803,7 +803,33 @@ export function parseGreenHopperSprintReport(report, sprint) {
 // Returns null when insufficient data.
 // ─────────────────────────────────────────────────────────────────────────────
 const MIN_SPRINTS_FOR_TRENDS = 5;
-const VELOCITY_DIRECTION_THRESHOLD = 0.10; // 10% change between first-3 and last-3 avg
+
+// ─────────────────────────────────────────────────────────────────────────────
+// computeCarryOver — pure function, no I/O
+//
+// Aggregates carry-over rate across the supplied sprints. Computed independently
+// of computeSprintTrends so the chat/Confluence summary line can show it for any
+// sprint count (including <5 where full trends are not available).
+//
+//   rate = avg( rolledOver / (planned + added − removed) )  per sprint
+//
+// Denominator is the work the team actually kept on their plate after mid-sprint
+// changes (== completed + rolledOver), so the rate is bounded 0–100%.
+// Sprints whose denominator is ≤ 0 (everything removed) are skipped.
+//
+// Thresholds: 🟢 ≤ 20% · 🟡 ≤ 50% · 🔴 > 50%   (matches CV / scope-change scale)
+// Label is volatility-style: 🟢 = Low · 🟡 = Medium · 🔴 = High
+// ─────────────────────────────────────────────────────────────────────────────
+export function computeCarryOver(sprints) {
+    if (!sprints || !Array.isArray(sprints)) return null;
+    const valid = sprints.filter(s => !s.error && (s.planned + s.added - s.removed) > 0);
+    if (valid.length === 0) return null;
+
+    const rate  = valid.reduce((a, s) => a + s.rolledOver / (s.planned + s.added - s.removed), 0) / valid.length;
+    const rag   = rate <= 0.20 ? '🟢' : rate <= 0.50 ? '🟡' : '🔴';
+    const label = rag === '🟢' ? 'Low' : rag === '🟡' ? 'Medium' : 'High';
+    return { avgPct: Math.round(rate * 100), rag, label };
+}
 
 export function computeSprintTrends(sprints) {
     if (!sprints || !Array.isArray(sprints)) return null;
@@ -821,21 +847,25 @@ export function computeSprintTrends(sprints) {
     const stddev     = Math.sqrt(variance);
     const cv         = overallAvgVel > 0 ? stddev / overallAvgVel : 0;
 
-    // Stability signal: CV ≤15% → 🟢, ≤30% → 🟡, >30% → 🔴
-    const velocityStabilityRag = cv <= 0.15 ? '🟢' : cv <= 0.30 ? '🟡' : '🔴';
+    // CV stability RAG: ≤20% → 🟢, ≤50% → 🟡, >50% → 🔴
+    const cvRag = cv <= 0.20 ? '🟢' : cv <= 0.50 ? '🟡' : '🔴';
 
-    // Direction: compare avg of first-3 vs avg of last-3
-    const first3    = valid.slice(0, 3).map(s => s.completed);
-    const last3     = valid.slice(-3).map(s => s.completed);
-    const avgFirst3 = avg(first3);
-    const avgLast3  = avg(last3);
-    let   velocityDirection = null; // null means no signal (noise)
-    if (avgFirst3 > 0) {
-        const pctChange = (avgLast3 - avgFirst3) / avgFirst3;
-        if (Math.abs(pctChange) >= VELOCITY_DIRECTION_THRESHOLD) {
-            velocityDirection = pctChange > 0 ? 'UP' : 'DOWN';
-        }
-    }
+    // Direction: split N sprints into two halves; first half is larger when N is odd
+    // (e.g. 5→3+2, 6→3+3, 7→4+3). Arrow always rendered.
+    const firstSize = Math.ceil(valid.length / 2);
+    const lastSize  = valid.length - firstSize;
+    const avgFirst  = avg(valid.slice(0, firstSize).map(s => s.completed));
+    const avgLast   = avg(valid.slice(firstSize).map(s => s.completed));
+    const pctChange = avgFirst > 0 ? (avgLast - avgFirst) / avgFirst : 0;
+    const velocityDirection = pctChange >= 0 ? 'UP' : 'DOWN';
+    // Direction RAG: flat or up → 🟢; decreasing <20% → 🟡; decreasing ≥20% → 🔴
+    const directionRag = pctChange >= 0 ? '🟢' : pctChange > -0.20 ? '🟡' : '🔴';
+
+    // Combined velocity RAG (CV + Direction): ceil((cvScore + dirScore) / 2)
+    // where 🟢=2, 🟡=1, 🔴=0. Yields g+g=g, g+y=g, g+r=y, y+y=y, y+r=y, r+r=r.
+    const ragScore   = rag => rag === '🟢' ? 2 : rag === '🟡' ? 1 : 0;
+    const scoreToRag = n   => n >= 2 ? '🟢' : n >= 1 ? '🟡' : '🔴';
+    const velocityCombinedRag = scoreToRag(Math.ceil((ragScore(cvRag) + ragScore(directionRag)) / 2));
 
     // ── 2. SCOPE MANAGEMENT ───────────────────────────────────────────────
     const sprintsWithPlanned = valid.filter(s => s.planned > 0);
@@ -858,44 +888,57 @@ export function computeSprintTrends(sprints) {
         : additionCompletionRate >= 0.40 ? '🟡'
         : '🔴';
 
-    // ── 3. CARRY-OVER (for predictability) ───────────────────────────────
-    const avgCarryOverRate = sprintsWithPlanned.length > 0
-        ? avg(sprintsWithPlanned.map(s => s.rolledOver / s.planned))
-        : 0;
-    // Carry-over RAG: ≤10% → 🟢, ≤25% → 🟡, >25% → 🔴
-    const carryOverRag = avgCarryOverRate <= 0.10 ? '🟢' : avgCarryOverRate <= 0.25 ? '🟡' : '🔴';
+    // Combined scope RAG (Change + Additions Completed): rounded average.
+    // Skips additionCompletionRag when no mid-sprint additions exist.
+    const scopeRags        = [scopeChurnRag, additionCompletionRag].filter(Boolean);
+    const scopeCombinedRag = scoreToRag(
+        Math.round(scopeRags.reduce((a, r) => a + ragScore(r), 0) / scopeRags.length)
+    );
+
+    // ── 3. CARRY-OVER ─────────────────────────────────────────────────────
+    // Delegated to computeCarryOver so the chat/Confluence summary line and the
+    // Predictability table share one source of truth.
+    const carryOver = computeCarryOver(valid) ?? { avgPct: 0, rag: '🟢', label: 'Low' };
+
+    // Label mappings — semantically inverted: stability "High" = good, volatility "Low" = good.
+    const stabilityLabel  = rag => rag === '🟢' ? 'High' : rag === '🟡' ? 'Medium' : 'Low';
+    const volatilityLabel = rag => rag === '🟢' ? 'Low'  : rag === '🟡' ? 'Medium' : 'High';
 
     // ── 4. PREDICTABILITY SCORE ────────────────────────────────────────────
-    // Weights: 🟢=2 · 🟡=1 · 🔴=0 · max=6
-    const ragWeight = rag => rag === '🟢' ? 2 : rag === '🟡' ? 1 : 0;
-    const score     = ragWeight(velocityStabilityRag) + ragWeight(carryOverRag) + ragWeight(scopeChurnRag);
-    const pctBehind = Math.round((6 - score) / 6 * 100);
-    const predictabilityRag  = pctBehind <= 20 ? '🟢' : pctBehind <= 50 ? '🟡' : '🔴';
-    const predictabilityLabel = pctBehind <= 20 ? 'High' : pctBehind <= 50 ? 'Medium' : 'Low';
+    // Three dimensions: Velocity Stability + Scope Volatility + Carry-over.
+    // Weights: 🟢=2 · 🟡=1 · 🔴=0 · max=6. Normalized to a 0-1 scale for display.
+    const score           = ragScore(velocityCombinedRag) + ragScore(scopeCombinedRag) + ragScore(carryOver.rag);
+    const normalizedScore = Math.round(score / 6 * 100) / 100;
+    const predictabilityRag   = normalizedScore >= 0.80 ? '🟢' : normalizedScore >= 0.50 ? '🟡' : '🔴';
+    const predictabilityLabel = normalizedScore >= 0.80 ? 'High' : normalizedScore >= 0.50 ? 'Medium' : 'Low';
 
     return {
         sprintCount: valid.length,
         velocity: {
-            overallAvg:  Math.round(overallAvgVel),
-            cv:          Math.round(cv * 100),        // percentage
-            stabilityRag: velocityStabilityRag,
-            direction:   velocityDirection,           // 'UP' | 'DOWN' | null
-            avgFirst3:   Math.round(avgFirst3),
-            avgLast3:    Math.round(avgLast3),
+            overallAvg:    Math.round(overallAvgVel),
+            cv:            Math.round(cv * 100),        // percentage
+            cvRag,
+            direction:     velocityDirection,           // 'UP' | 'DOWN'
+            directionRag,
+            avgFirst:      Math.round(avgFirst),
+            avgLast:       Math.round(avgLast),
+            firstSize,
+            lastSize,
+            combinedRag:   velocityCombinedRag,
+            combinedLabel: stabilityLabel(velocityCombinedRag),
         },
         scope: {
-            avgChurnPct:           Math.round(avgChurnRate * 100),
-            churnRag:              scopeChurnRag,
+            avgChangePct:          Math.round(avgChurnRate * 100),
+            changeRag:             scopeChurnRag,
             additionCompletionPct: additionCompletionRate !== null ? Math.round(additionCompletionRate * 100) : null,
             additionCompletionRag,
+            combinedRag:           scopeCombinedRag,
+            combinedLabel:         volatilityLabel(scopeCombinedRag),
         },
-        carryOver: {
-            avgPct: Math.round(avgCarryOverRate * 100),
-            rag:    carryOverRag,
-        },
+        carryOver,
         predictability: {
             score,
-            pctBehind,
+            normalizedScore,
             rag:   predictabilityRag,
             label: predictabilityLabel,
         },
