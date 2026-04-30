@@ -26,7 +26,9 @@ const root      = join(__dirname, '..');
 
 function read(relPath) {
     try {
-        return readFileSync(join(root, relPath), 'utf8');
+        // Normalize CRLF → LF so section extraction (which looks for '\n## …\n')
+        // works regardless of how the source file is saved on disk.
+        return readFileSync(join(root, relPath), 'utf8').replace(/\r\n/g, '\n');
     } catch (e) {
         console.error(`ERROR: could not read ${relPath}: ${e.message}`);
         process.exit(1);

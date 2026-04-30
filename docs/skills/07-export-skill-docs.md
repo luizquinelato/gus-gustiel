@@ -34,14 +34,16 @@ The User Guide page contains:
 
 Content comes from the bundled `USER_GUIDE_MD` export in `src/docs/index.js`, generated at deploy time by `scripts/bundle-docs.mjs`. Each skill doc's `## 📋 User Guide` section is extracted and concatenated. The DEV/PROD preamble and environment metadata are prepended at runtime.
 
-After the page is upserted, the resolver uploads any bundled screenshots as Confluence attachments (`uploadAttachment` in `confluence-api-service.js`), then re-PUTs the same page body so Confluence re-resolves the `<ri:attachment>` references with the now-present files.
+After the page is upserted, the resolver uploads any bundled screenshots as Confluence attachments (`uploadAttachment` in `confluence-api-service.js`), then re-PUTs the same page body so Confluence re-resolves the `<ri:attachment>` references with the now-present files. `uploadAttachment` is idempotent — on re-runs it detects the existing attachment by filename and replaces it via the `/data` sub-endpoint instead of POSTing a duplicate (which would return HTTP 400).
 
 ### Key Patterns
 
 - **Bundled screenshots**: `ATTACH:filename.png` in markdown → `<ac:image ac:align="center"><ri:attachment ri:filename="…"/></ac:image>` (centered)
 - **Two-step upload flow**: upsert page → upload attachment → re-PUT page body (required; without the re-PUT Confluence shows "Preview unavailable" even after a successful upload)
+- **Idempotent attachment upsert**: `uploadAttachment` calls `findAttachmentByFilename` first; existing files go to `/child/attachment/{id}/data` (new version), missing files go to `/child/attachment` (create). Avoids the HTTP 400 duplicate-filename failure on re-deploys.
 - **Attachment scope**: `write:confluence-file` (classic Atlassian scope) is the correct scope for `uploadAttachment`. `write:attachment:confluence` (granular, v2-only) and `write:confluence-content` (page content) both fail with "scope does not match"
 - **Upsert logic**: find by title → update in place → move + update → create (same as portfolio export)
+- **Error visibility**: per-screenshot upload outcomes are returned in `response.screenshots[]`; any failures (and re-render errors) are appended to `response.message` as `⚠️` warning lines so they show up in Rovo chat.
 - **No Jira ETL**: documentation-only. No session, no cache.
 
 ### See Also

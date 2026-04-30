@@ -13,6 +13,7 @@
  *   createFolder(spaceId, title, parentId?)               → { id, type, ... }
  *   findFolderByTitle(spaceKey, title)                    → { id, title } | null
  *   findOrCreatePageByPath(spaceId, pathString)           → parentId string | null
+ *   findAttachmentByFilename(pageId, filename)            → { id, title, ... } | null
  *   uploadAttachment(pageId, filename, base64Data, mimeType?) → Confluence API response
  *
  * NOTE on folder support:
@@ -313,10 +314,33 @@ export async function findOrCreatePageByPath(spaceId, pathString) {
 }
 
 /**
- * Upload a file as an attachment to an existing Confluence page.
+ * Look up an attachment on a page by filename.
  *
- * If an attachment with the same filename already exists on the page,
- * Confluence replaces it (idempotent when called after page upsert).
+ * Uses the v1 content API (v2 has no equivalent filename filter on attachments).
+ *
+ * @param {string} pageId   - Numeric Confluence page ID
+ * @param {string} filename - Filename to look up (case-sensitive)
+ * @returns {Promise<object|null>}  Attachment object (with .id) or null when missing
+ */
+export async function findAttachmentByFilename(pageId, filename) {
+    const response = await asApp().requestConfluence(
+        route`/wiki/rest/api/content/${pageId}/child/attachment?filename=${filename}&limit=1`,
+        { headers: { 'Accept': 'application/json' } }
+    );
+
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.results?.[0] || null;
+}
+
+/**
+ * Upload (or replace) a file as an attachment on an existing Confluence page.
+ *
+ * The v1 endpoint POST /child/attachment returns HTTP 400 when the same filename
+ * already exists on the page. To make the operation idempotent across re-deploys
+ * and re-runs of the export action, we first look up the attachment by filename
+ * and, when present, push the new bytes to its /data sub-endpoint (which creates
+ * a new version of the existing attachment instead of erroring).
  *
  * @param {string} pageId     - Numeric Confluence page ID
  * @param {string} filename   - Filename as it should appear in Confluence (e.g. "screenshot.png")
@@ -336,23 +360,22 @@ export async function uploadAttachment(pageId, filename, base64Data, mimeType = 
     const blob     = new Blob([bytes], { type: mimeType });
     const formData = new FormData();
     formData.append('file', blob, filename);
+    formData.append('minorEdit', 'true');
 
-    // Upload via v1 REST multipart endpoint using asApp() + write:confluence-file (classic scope).
-    // Auth history:
-    //   asApp()  + v1 + granular scope only          → 401 "scope does not match" (granular scopes map to v2 only)
-    //   asUser() + v1                                 → "Authentication Required" (v1 rejects OAuth Bearer tokens)
-    //   asUser() + v2                                 → fails (v2 has no POST /pages/{id}/attachments endpoint)
-    //   asApp()  + v1 + write:confluence-content      → 401 "scope does not match" (wrong classic scope; that's for page content)
-    //   asApp()  + v1 + write:confluence-file         → correct: Atlassian docs confirm this is the classic scope for attachment uploads
-    // X-Atlassian-Token: nocheck is the mandatory CSRF bypass header for v1 multipart uploads.
-    const response = await asApp().requestConfluence(
-        route`/wiki/rest/api/content/${pageId}/child/attachment`,
-        {
-            method:  'POST',
-            headers: { 'X-Atlassian-Token': 'nocheck' },
-            body:    formData,
-        }
-    );
+    // Decide whether to create or replace.
+    // Auth history (kept for context):
+    //   asApp()  + v1 + write:confluence-file → correct classic scope for attachment uploads
+    //   X-Atlassian-Token: nocheck            → mandatory CSRF bypass header for v1 multipart uploads
+    const existing = await findAttachmentByFilename(pageId, filename);
+    const endpoint = existing
+        ? route`/wiki/rest/api/content/${pageId}/child/attachment/${existing.id}/data`
+        : route`/wiki/rest/api/content/${pageId}/child/attachment`;
+
+    const response = await asApp().requestConfluence(endpoint, {
+        method:  'POST',
+        headers: { 'X-Atlassian-Token': 'nocheck' },
+        body:    formData,
+    });
 
     if (!response.ok) {
         const text = await response.text().catch(() => '');
