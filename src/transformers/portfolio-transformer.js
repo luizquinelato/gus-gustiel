@@ -850,22 +850,62 @@ export function computeSprintTrends(sprints) {
     // CV stability RAG: ≤20% → 🟢, ≤50% → 🟡, >50% → 🔴
     const cvRag = cv <= 0.20 ? '🟢' : cv <= 0.50 ? '🟡' : '🔴';
 
-    // Direction: split N sprints into two halves; first half is larger when N is odd
-    // (e.g. 5→3+2, 6→3+3, 7→4+3). Arrow always rendered.
-    const firstSize = Math.ceil(valid.length / 2);
-    const lastSize  = valid.length - firstSize;
-    const avgFirst  = avg(valid.slice(0, firstSize).map(s => s.completed));
-    const avgLast   = avg(valid.slice(firstSize).map(s => s.completed));
-    const pctChange = avgFirst > 0 ? (avgLast - avgFirst) / avgFirst : 0;
-    const velocityDirection = pctChange >= 0 ? 'UP' : 'DOWN';
-    // Direction RAG: flat or up → 🟢; decreasing <20% → 🟡; decreasing ≥20% → 🔴
-    const directionRag = pctChange >= 0 ? '🟢' : pctChange > -0.20 ? '🟡' : '🔴';
+    // Direction: linear regression slope across ALL sprints (least-squares best-fit).
+    // Uses every data point — naturally captures up/down/flat trends and is resistant
+    // to single-sprint outliers, unlike a window-based first-vs-last comparison.
+    //   slope m = Σ((xᵢ−x̄)(yᵢ−ȳ)) / Σ((xᵢ−x̄)²)
+    //   intercept b = ȳ − m·x̄
+    // Trend % compares the fitted line's start (x=0) and end (x=N−1) values.
+    const n         = valid.length;
+    const meanX     = (n - 1) / 2;
+    const numerator = velocities.reduce((s, y, x) => s + (x - meanX) * (y - overallAvgVel), 0);
+    const denomX    = velocities.reduce((s, _, x) => s + Math.pow(x - meanX, 2), 0);
+    const slope     = denomX > 0 ? numerator / denomX : 0;
+    const intercept = overallAvgVel - slope * meanX;
+    const fittedFirst = intercept;
+    const fittedLast  = intercept + slope * (n - 1);
+    const trendPct    = fittedFirst > 0 ? (fittedLast - fittedFirst) / fittedFirst : 0;
+    const trendPctInt = Math.round(trendPct * 100);
+    const velocityDirection = trendPctInt === 0 ? 'FLAT' : trendPctInt > 0 ? 'UP' : 'DOWN';
+    // Direction RAG: ≤20% drop or any rise → 🟢; 20–50% drop → 🟡; >50% drop → 🔴
+    const directionRag = trendPct >= -0.20 ? '🟢' : trendPct >= -0.50 ? '🟡' : '🔴';
+    const actualFirst = velocities[0];
+    const actualLast  = velocities[n - 1];
 
-    // Combined velocity RAG (CV + Direction): ceil((cvScore + dirScore) / 2)
+    // ── BOTTOM-30% WEIGHTING ──────────────────────────────────────────────
+    // When a leaf metric sits in the worst 30% of its current band, it counts
+    // as the next-worse RAG when feeding combined formulas (Velocity Stability,
+    // Scope Volatility). Leaf displays are unchanged; combined math sees the
+    // demoted value. 🔴 and null leaves are never demoted.
+    const isBottomThird = (value, rag, lowerIsBetter, greenLow, greenHigh, yellowLow, yellowHigh) => {
+        if (rag === '🔴' || value === null) return false;
+        const [low, high] = rag === '🟢' ? [greenLow, greenHigh] : [yellowLow, yellowHigh];
+        const cutoff = lowerIsBetter ? high - 0.30 * (high - low) : low + 0.30 * (high - low);
+        return lowerIsBetter ? value >= cutoff : value <= cutoff;
+    };
+    const demoteRag = rag => rag === '🟢' ? '🟡' : '🔴';
+    const weighIfBorderline = (rag, borderline) => borderline ? demoteRag(rag) : rag;
+
+    // CV (lower better): 🟢 [0, 20]%, 🟡 (20, 50]%. Direction (higher better):
+    // 🟢 watch-zone [-20, 0]% (positive trends always safely green); 🟡 [-50, -20)%.
+    const cvBorderline   = isBottomThird(cv,       cvRag,        true,  0,     0.20, 0.20, 0.50);
+    const dirBorderline  = isBottomThird(trendPct, directionRag, false, -0.20, 0,    -0.50, -0.20);
+    const cvWeightedRag  = weighIfBorderline(cvRag,        cvBorderline);
+    const dirWeightedRag = weighIfBorderline(directionRag, dirBorderline);
+
+    // Combined velocity RAG (CV + Direction, weighted): ceil((cvScore + dirScore) / 2)
     // where 🟢=2, 🟡=1, 🔴=0. Yields g+g=g, g+y=g, g+r=y, y+y=y, y+r=y, r+r=r.
     const ragScore   = rag => rag === '🟢' ? 2 : rag === '🟡' ? 1 : 0;
     const scoreToRag = n   => n >= 2 ? '🟢' : n >= 1 ? '🟡' : '🔴';
-    const velocityCombinedRag = scoreToRag(Math.ceil((ragScore(cvRag) + ragScore(directionRag)) / 2));
+    const rawVelocityCombinedRag = scoreToRag(Math.ceil((ragScore(cvWeightedRag) + ragScore(dirWeightedRag)) / 2));
+
+    // Activity floor — CV and Direction become noise when delivery is near zero
+    // (e.g. avg=2 SP can show "+150% trend" from a 1→3 SP fitted line). Below
+    // 10 SP/sprint (~2 devs × 5 SP per 2-week sprint) the overall signal is
+    // forced to 🔴 regardless of the leaf metrics.
+    const VELOCITY_FLOOR_SP   = 10;
+    const lowActivity         = overallAvgVel < VELOCITY_FLOOR_SP;
+    const velocityCombinedRag = lowActivity ? '🔴' : rawVelocityCombinedRag;
 
     // ── 2. SCOPE MANAGEMENT ───────────────────────────────────────────────
     const sprintsWithPlanned = valid.filter(s => s.planned > 0);
@@ -874,25 +914,33 @@ export function computeSprintTrends(sprints) {
     const avgChurnRate = sprintsWithPlanned.length > 0
         ? avg(sprintsWithPlanned.map(s => (s.added + s.removed) / s.planned))
         : 0;
-    // Churn RAG: ≤20% → 🟢, ≤40% → 🟡, >40% → 🔴
-    const scopeChurnRag = avgChurnRate <= 0.20 ? '🟢' : avgChurnRate <= 0.40 ? '🟡' : '🔴';
+    // Churn RAG: ≤20% → 🟢, ≤50% → 🟡, >50% → 🔴 (standard 20/50 framework)
+    const scopeChurnRag = avgChurnRate <= 0.20 ? '🟢' : avgChurnRate <= 0.50 ? '🟡' : '🔴';
 
     // Additions completion rate: addedCompleted / (addedCompleted + addedNotCompleted)
     const totalAddedCompleted    = valid.reduce((a, s) => a + (s.addedCompleted    || 0), 0);
     const totalAddedNotCompleted = valid.reduce((a, s) => a + (s.addedNotCompleted || 0), 0);
     const totalAdded             = totalAddedCompleted + totalAddedNotCompleted;
     const additionCompletionRate = totalAdded > 0 ? totalAddedCompleted / totalAdded : null;
-    // Addition completion RAG: ≥70% → 🟢, ≥40% → 🟡, <40% → 🔴 (null = no data, treated as 🟡)
+    // Addition completion RAG: ≥80% → 🟢, ≥50% → 🟡, <50% → 🔴 (mirror of the
+    // 20/50 framework for "higher is better" metrics; null = no data, exempt)
     const additionCompletionRag  = additionCompletionRate === null ? null
-        : additionCompletionRate >= 0.70 ? '🟢'
-        : additionCompletionRate >= 0.40 ? '🟡'
+        : additionCompletionRate >= 0.80 ? '🟢'
+        : additionCompletionRate >= 0.50 ? '🟡'
         : '🔴';
 
-    // Combined scope RAG (Change + Additions Completed): rounded average.
+    // Scope churn (lower better): 🟢 [0, 20]%, 🟡 (20, 50]%. Addition completion
+    // (higher better): 🟢 [80, 100]%, 🟡 [50, 80)%. null = no data → exempt.
+    const churnBorderline    = isBottomThird(avgChurnRate, scopeChurnRag, true, 0, 0.20, 0.20, 0.50);
+    const additionBorderline = isBottomThird(additionCompletionRate, additionCompletionRag, false, 0.80, 1.00, 0.50, 0.80);
+    const churnWeightedRag    = weighIfBorderline(scopeChurnRag, churnBorderline);
+    const additionWeightedRag = additionCompletionRag === null ? null : weighIfBorderline(additionCompletionRag, additionBorderline);
+
+    // Combined scope RAG (Churn + Additions Completed, weighted): rounded average.
     // Skips additionCompletionRag when no mid-sprint additions exist.
-    const scopeRags        = [scopeChurnRag, additionCompletionRag].filter(Boolean);
-    const scopeCombinedRag = scoreToRag(
-        Math.round(scopeRags.reduce((a, r) => a + ragScore(r), 0) / scopeRags.length)
+    const scopeWeightedRags = [churnWeightedRag, additionWeightedRag].filter(Boolean);
+    const scopeCombinedRag  = scoreToRag(
+        Math.round(scopeWeightedRags.reduce((a, r) => a + ragScore(r), 0) / scopeWeightedRags.length)
     );
 
     // ── 3. CARRY-OVER ─────────────────────────────────────────────────────
@@ -904,10 +952,22 @@ export function computeSprintTrends(sprints) {
     const stabilityLabel  = rag => rag === '🟢' ? 'High' : rag === '🟡' ? 'Medium' : 'Low';
     const volatilityLabel = rag => rag === '🟢' ? 'Low'  : rag === '🟡' ? 'Medium' : 'High';
 
-    // ── 4. PREDICTABILITY SCORE ────────────────────────────────────────────
+    // ── 4. ACTIVITY FLOOR CASCADE ─────────────────────────────────────────
+    // When avg velocity is below the 10 SP/sprint floor, scope and carry-over
+    // score 🟢 trivially (nothing to churn, nothing to roll over), which would
+    // inflate predictability and contradict the forced-🔴 Velocity Stability.
+    // Force every combined signal to 🔴 so the Predictability dimension table
+    // is internally consistent (all 🔴 → total 🔴 0.00). Leaf metrics are kept
+    // honest (the headline-level explainer in the formatter tells the reader why).
+    const finalScopeCombinedRag = lowActivity ? '🔴' : scopeCombinedRag;
+    const finalCarryOver        = lowActivity
+        ? { ...carryOver, rag: '🔴', label: 'High' }
+        : carryOver;
+
+    // ── 5. PREDICTABILITY SCORE ────────────────────────────────────────────
     // Three dimensions: Velocity Stability + Scope Volatility + Carry-over.
     // Weights: 🟢=2 · 🟡=1 · 🔴=0 · max=6. Normalized to a 0-1 scale for display.
-    const score           = ragScore(velocityCombinedRag) + ragScore(scopeCombinedRag) + ragScore(carryOver.rag);
+    const score           = ragScore(velocityCombinedRag) + ragScore(finalScopeCombinedRag) + ragScore(finalCarryOver.rag);
     const normalizedScore = Math.round(score / 6 * 100) / 100;
     const predictabilityRag   = normalizedScore >= 0.80 ? '🟢' : normalizedScore >= 0.50 ? '🟡' : '🔴';
     const predictabilityLabel = normalizedScore >= 0.80 ? 'High' : normalizedScore >= 0.50 ? 'Medium' : 'Low';
@@ -918,24 +978,31 @@ export function computeSprintTrends(sprints) {
             overallAvg:    Math.round(overallAvgVel),
             cv:            Math.round(cv * 100),        // percentage
             cvRag,
-            direction:     velocityDirection,           // 'UP' | 'DOWN'
+            cvBorderline,                               // true → contributed to a 70/30 demotion
+            direction:     velocityDirection,           // 'UP' | 'DOWN' | 'FLAT'
             directionRag,
-            avgFirst:      Math.round(avgFirst),
-            avgLast:       Math.round(avgLast),
-            firstSize,
-            lastSize,
+            directionBorderline: dirBorderline,
+            trendPct:      trendPctInt,                 // signed integer percentage
+            fittedFirst:   Math.round(fittedFirst),
+            fittedLast:    Math.round(fittedLast),
+            actualFirst,
+            actualLast,
+            lowActivity,                                // true → forced to 🔴 by activity floor
             combinedRag:   velocityCombinedRag,
             combinedLabel: stabilityLabel(velocityCombinedRag),
         },
         scope: {
-            avgChangePct:          Math.round(avgChurnRate * 100),
-            changeRag:             scopeChurnRag,
-            additionCompletionPct: additionCompletionRate !== null ? Math.round(additionCompletionRate * 100) : null,
+            avgChangePct:                 Math.round(avgChurnRate * 100),
+            changeRag:                    scopeChurnRag,
+            changeBorderline:             churnBorderline,
+            additionCompletionPct:        additionCompletionRate !== null ? Math.round(additionCompletionRate * 100) : null,
             additionCompletionRag,
-            combinedRag:           scopeCombinedRag,
-            combinedLabel:         volatilityLabel(scopeCombinedRag),
+            additionCompletionBorderline: additionBorderline,
+            lowActivity,                                // true → forced to 🔴 by activity floor
+            combinedRag:                  finalScopeCombinedRag,
+            combinedLabel:                volatilityLabel(finalScopeCombinedRag),
         },
-        carryOver,
+        carryOver: finalCarryOver,
         predictability: {
             score,
             normalizedScore,

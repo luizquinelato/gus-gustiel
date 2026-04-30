@@ -478,11 +478,12 @@ export function formatLCTSection(allTeams, teamStats, lctReady = false, renderHe
         return lct && lct.byType && Object.keys(lct.byType).length > 0;
     });
 
-    // Standalone export: H1 is page title → section = H2, teams = H3.
-    // Portfolio chat (renderHeading=true): section = H3, teams = H4.
-    // Portfolio Confluence (renderHeading=false): no section, teams = H3.
-    if (standalone || renderHeading) {
-        lines.push(standalone ? '## ⏱️ Lead / Cycle Time by Issue Type' : '### ⏱️ Lead / Cycle Time by Issue Type');
+    // Standalone export: H1 is the page title → teams promoted to H2 directly
+    // (mirrors the Sprint export structure where each team owns its own H2).
+    // Portfolio chat (renderHeading=true): emit a ### section heading; teams = H4.
+    // Portfolio Confluence (renderHeading=false): no section heading; teams = H3.
+    if (renderHeading && !standalone) {
+        lines.push('### ⏱️ Lead / Cycle Time by Issue Type');
         lines.push('');
     }
 
@@ -501,10 +502,10 @@ export function formatLCTSection(allTeams, teamStats, lctReady = false, renderHe
         }
     } else {
         // Team heading level:
-        //   standalone=true          → ### (H3, sits under ## section)
+        //   standalone=true          → ## (H2, sits directly under the page H1)
         //   standalone=false, renderHeading=true  → #### (H4, sits under ### portfolio section)
         //   standalone=false, renderHeading=false → ### (H3, sits under ## portfolio section)
-        const teamH = standalone ? '###' : (renderHeading ? '####' : '###');
+        const teamH = standalone ? '##' : (renderHeading ? '####' : '###');
         for (const team of allTeams) {
             const lct = (teamStats[team] || {}).lct;
             lines.push(`${teamH} ${team}`);
@@ -616,15 +617,14 @@ export function formatSprintSection(allTeams, sprintsByTeam, trendsByTeam = null
             ].join('\n'));
             continue;
         }
-        let summary = '';
-        if (validSprints.length > 0) {
-            const avgVelocity = Math.round(validSprints.reduce((a, s) => a + s.completed, 0) / validSprints.length);
-            const avgSayDo    = validSprints.reduce((a, s) => a + s.sayDo, 0) / validSprints.length;
-            const sdRag       = avgSayDo >= 0.8 ? '🟢' : avgSayDo >= 0.5 ? '🟡' : '🔴';
-            const co          = computeCarryOver(validSprints);
-            const coCell      = co ? ` · **Avg Carry-over:** ${co.rag} ${co.avgPct}% (${co.label})` : '';
-            summary = `\n**Avg Velocity:** ${avgVelocity} SP · **Avg Say/Do:** ${sdRag} ${Math.round(avgSayDo * 100)}%${coCell}`;
-        }
+        // Headline averages render above the sprint table — readers see the
+        // team-level summary before scanning sprint-by-sprint detail.
+        const avgVelocity = Math.round(validSprints.reduce((a, s) => a + s.completed, 0) / validSprints.length);
+        const avgSayDo    = validSprints.reduce((a, s) => a + s.sayDo, 0) / validSprints.length;
+        const sdRag       = avgSayDo >= 0.8 ? '🟢' : avgSayDo >= 0.5 ? '🟡' : '🔴';
+        const co          = computeCarryOver(validSprints);
+        const coCell      = co ? ` · **Avg Carry-over:** ${co.rag} ${co.avgPct}% (${co.label})` : '';
+        const summary     = `**Avg Velocity:** ${avgVelocity} SP · **Avg Say/Do:** ${sdRag} ${Math.round(avgSayDo * 100)}%${coCell}`;
 
         const trendSections = formatSprintTrendSections(trendsByTeam?.[team] ?? null, standalone, true);
         const trendNote = !trendSections && validSprints.length > 0 && validSprints.length < 5
@@ -633,11 +633,14 @@ export function formatSprintSection(allTeams, sprintsByTeam, trendsByTeam = null
 
         sections.push([
             header,
+            ...formatSprintIntro(),
+            '',
+            summary,
+            '',
             '<!--uniform-->',
             HEADER,
             DIVIDER,
             ...data.sprints.map(spRow),
-            summary,
             trendNote,
             trendSections,
             '---',
@@ -678,6 +681,29 @@ export function formatTeamEfficiencyTable(allTeams, teamStats) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shared intro — RYG signal explanation + ⚠️ marker meaning. Rendered once per
+// team right after the board/team header so the legend sits next to the first
+// coloured cells the reader sees (Say/Do column in the sprint table).
+// ─────────────────────────────────────────────────────────────────────────────
+function formatSprintIntro() {
+    // Every line carries the '> ' prefix so the quote bar wraps the entire
+    // legend. The three colour lines render as <p> tags; the empty '> ' line
+    // creates a visual gap; the trailing rules render as a <ul> inside the
+    // same blockquote (parser groups consecutive '> -' lines).
+    return [
+        '> Each metric uses a 🟢 / 🟡 / 🔴 signal:',
+        '> 🟢 healthy (within 20% of ideal)',
+        '> 🟡 caution (20–50% off)',
+        '> 🔴  concerning (more than 50% off)',
+        '> ',
+        '> - A ⚠️ after a value means it sits in the worst 30% of its band — counted as the '
+        + 'next-worse colour when computing the section\'s overall signal.',
+        '> - Velocity Stability is forced to 🔴 when avg velocity is below 10 SP/sprint '
+        + '(~2 devs × 5 SP per 2-week sprint — below this, trend math becomes too noisy to be meaningful).',
+    ];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Private helper — renders the three trend analysis sections from a trendData
 // object returned by computeSprintTrends(). Used by both chat and Confluence
 // export formatters so the logic is never duplicated.
@@ -687,7 +713,12 @@ function formatSprintTrendSections(trendData, standalone = false, forConfluence 
 
     const { velocity, scope, carryOver, predictability, sprintCount } = trendData;
 
-    const dirArrow = velocity.direction === 'UP' ? ' ⬆️' : ' ⬇️';
+    const dirArrow = velocity.direction === 'UP' ? ' ⬆️' : velocity.direction === 'DOWN' ? ' ⬇️' : ' ➡️';
+    const trendSign = velocity.trendPct > 0 ? '+' : '';
+    // ⚠️ marker — appears next to a leaf metric's RAG when its value sits in the
+    // worst 30% of its band, signalling that it contributed to a 70/30 demotion
+    // when computing the section's overall RAG. Carry-over is exempt by design.
+    const mark = b => b ? '⚠️' : '';
 
     // Standalone: team is H2, trend sub-sections are H3. Portfolio: team is H3, sub-sections are H4.
     const trendH = standalone ? '###' : '####';
@@ -706,15 +737,19 @@ function formatSprintTrendSections(trendData, standalone = false, forConfluence 
         '> *Measures how consistent and stable the team\'s delivery rate is over time. '
         + 'A stable velocity makes forecasting reliable; high variation signals unpredictability.*',
         '',
+        `${velocity.combinedRag} **Overall Velocity Stability:** ${velocity.combinedLabel}`
+        + (velocity.lowActivity ? ` _(forced 🔴 — avg velocity ${velocity.overallAvg} SP < 10 SP/sprint floor)_` : ''),
+        '',
         uMark,
         `| Metric | Value |`,
         `|---|---|`,
         `| Sprints analysed | ${sprintCount} |`,
         `| Average velocity | **${velocity.overallAvg} SP/sprint** |`,
-        `| Variation (CV) | ${velocity.cvRag} ${velocity.cv}% |`,
-        `| Direction | ${velocity.directionRag}${dirArrow} avg first-${velocity.firstSize}: ${velocity.avgFirst} SP → avg last-${velocity.lastSize}: ${velocity.avgLast} SP |`,
+        `| Coefficient of Variation (CV) | ${velocity.cvRag} ${velocity.cv}%${mark(velocity.cvBorderline)} |`,
+        `| Direction | ${velocity.directionRag}${dirArrow} ${trendSign}${velocity.trendPct}%${mark(velocity.directionBorderline)} trend (actual: ${velocity.actualFirst} → ${velocity.actualLast} SP · trend line points: ${velocity.fittedFirst} → ${velocity.fittedLast} SP) |`,
         '',
-        `> ${velocity.combinedRag} **Overall Velocity Stability:** ${velocity.combinedLabel}`,
+        '> *The trend line is the best-fit line through all sprints — it smooths out spikes and dips. '
+        + 'The trend % compares the line\'s start and end values, not the raw first/last sprint.*',
         '',
         '\u00A0',
         '',
@@ -723,22 +758,24 @@ function formatSprintTrendSections(trendData, standalone = false, forConfluence 
         + 'Low change (≤20%) means the team commits to a plan and sticks to it. '
         + 'Addition completion rate shows whether added work is actually finished or becomes carry-over.*',
         '',
+        `${scope.combinedRag} **Overall Scope Volatility:** ${scope.combinedLabel}`
+        + (scope.lowActivity ? ` _(forced 🔴 — avg velocity ${velocity.overallAvg} SP < 10 SP/sprint floor)_` : ''),
+        '',
         uMark,
         `| Metric | Value |`,
         `|---|---|`,
-        `| Avg scope change | ${scope.changeRag} ${scope.avgChangePct}% of planned SP added or removed per sprint |`,
+        `| Avg scope change | ${scope.changeRag} ${scope.avgChangePct}%${mark(scope.changeBorderline)} of planned SP added or removed per sprint |`,
         scope.additionCompletionPct !== null
-            ? `| Additions completed | ${scope.additionCompletionRag} ${scope.additionCompletionPct}% of mid-sprint additions were delivered |`
+            ? `| Additions completed | ${scope.additionCompletionRag} ${scope.additionCompletionPct}%${mark(scope.additionCompletionBorderline)} of mid-sprint additions were delivered |`
             : `| Additions completed | — *(no mid-sprint additions recorded)* |`,
-        '',
-        `> ${scope.combinedRag} **Overall Scope Volatility:** ${scope.combinedLabel}`,
         '',
         '\u00A0',
         '',
         `${trendH} 🎯 Predictability Score`,
         '> *Combines overall velocity stability, scope volatility, and carry-over rate into a single score.*',
         '> *🟢 = 2 pts · 🟡 = 1 pt · 🔴 = 0 pts · max = 6 pts → normalized to 0–1.*',
-        '> *🟢 High ≥ 0.80 · 🟡 Medium ≥ 0.50 · 🔴 Low < 0.50.*',
+        '',
+        `${predictability.rag} **Overall Predictability:** ${predictability.label}`,
         '',
         uMark,
         `| Dimension | Signal | Weight |`,
@@ -747,8 +784,6 @@ function formatSprintTrendSections(trendData, standalone = false, forConfluence 
         `| Scope Volatility | ${scope.combinedRag} | ${ragWeight(scope.combinedRag)} |`,
         `| Carry-over | ${carryOver.rag} | ${ragWeight(carryOver.rag)} |`,
         `| **Total** | | ${predictability.rag} ${predictability.normalizedScore.toFixed(2)} |`,
-        '',
-        `**${predictability.rag} Overall Predictability:** ${predictability.label}`,
     ].filter(l => l !== null);
 
     return lines.join('\n');
@@ -798,6 +833,21 @@ export function formatTeamSprintChat(teamName, boardName, boardId, sprints, tren
     const boardLabel = boardName ? `${boardName} *(ID: ${boardId})*` : (boardId ? `Board ID: ${boardId}` : '');
     const lines = [`## 🏃 Sprint Analysis — ${teamName}`];
     if (boardLabel) lines.push(`> 📋 **Board:** ${boardLabel}`);
+
+    // Intro (RYG legend + ⚠️ meaning) sits right after the board header so the
+    // reader meets the legend before encountering any coloured cell.
+    lines.push('', ...formatSprintIntro());
+
+    // Headline averages render above the sprint table — readers see the
+    // team-level summary before scanning sprint-by-sprint detail.
+    const avgVelocity = Math.round(validSprints.reduce((a, s) => a + s.completed, 0) / validSprints.length);
+    const avgSayDo    = validSprints.reduce((a, s) => a + s.sayDo, 0) / validSprints.length;
+    const avgEmoji    = avgSayDo >= 0.8 ? '🟢' : avgSayDo >= 0.5 ? '🟡' : '🔴';
+    const co          = computeCarryOver(validSprints);
+    const coCell      = co ? ` · **Avg Carry-over:** ${co.rag} ${co.avgPct}% (${co.label})` : '';
+    lines.push('');
+    lines.push(`**Avg Velocity:** ${avgVelocity} SP/sprint · **Avg Say/Do:** ${avgEmoji} ${Math.round(avgSayDo * 100)}%${coCell}`);
+
     lines.push(
         '',
         '| 🗓️ Sprint | 📋 Planned | ➕ Added | ➖ Removed | ✅ Velocity | 🔄 Carry-over | 🎯 Say/Do |',
@@ -811,17 +861,6 @@ export function formatTeamSprintChat(teamName, boardName, boardId, sprints, tren
         }
         const sd = `${s.sayDoRag} ${Math.round(s.sayDo * 100)}%`;
         lines.push(`| **${s.name}** | ${spCell(s.planned, s.plannedNoSp)} | ${spCell(s.added, s.addedNoSp)} | ${spCell(s.removed, s.removedNoSp)} | **${spCell(s.completed, s.velocityNoSp)}** | ${spCell(s.rolledOver, s.rolledOverNoSp)} | ${sd} |`);
-    }
-
-    // validSprints already computed above (at least 1 exists — all-failed path returned early)
-    if (validSprints.length > 0) {
-        const avgVelocity = Math.round(validSprints.reduce((a, s) => a + s.completed, 0) / validSprints.length);
-        const avgSayDo    = validSprints.reduce((a, s) => a + s.sayDo, 0) / validSprints.length;
-        const avgEmoji    = avgSayDo >= 0.8 ? '🟢' : avgSayDo >= 0.5 ? '🟡' : '🔴';
-        const co          = computeCarryOver(validSprints);
-        const coCell      = co ? ` · **Avg Carry-over:** ${co.rag} ${co.avgPct}% (${co.label})` : '';
-        lines.push('');
-        lines.push(`> **Avg Velocity:** ${avgVelocity} SP/sprint · **Avg Say/Do:** ${avgEmoji} ${Math.round(avgSayDo * 100)}%${coCell}`);
     }
 
     const trendSections = formatSprintTrendSections(trendData);

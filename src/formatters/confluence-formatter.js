@@ -321,14 +321,40 @@ export function markdownToStorage(markdown, { uniformColumns = false } = {}) {
         // Horizontal rule
         if (trimmed === '---') { html.push('<hr/>'); i++; continue; }
 
-        // Blockquote — collect consecutive '> ' lines into a single <blockquote> block
+        // Blockquote — collect consecutive '> ' lines into a single <blockquote>.
+        // Inside the quote, lines starting with '- ' or '* ' are grouped into a
+        // nested <ul> so quoted bulleted lists render as a real list (with the
+        // quote bar still wrapping every item) instead of literal '- ' text.
         if (line.startsWith('> ')) {
-            const bqLines = [];
+            const inner = [];
             while (i < lines.length && lines[i].startsWith('> ')) {
-                bqLines.push(`<p>${inlineToHtml(lines[i].slice(2))}</p>`);
+                inner.push(lines[i].slice(2));
                 i++;
             }
-            html.push(`<blockquote>${bqLines.join('')}</blockquote>`);
+            const parts = [];
+            let j = 0;
+            while (j < inner.length) {
+                const t = inner[j].trimStart();
+                // Empty '> ' line — used as a visual paragraph separator inside
+                // the blockquote. Skip without emitting an empty <p> tag (which
+                // would render as a blank line). Block-level margins between
+                // adjacent <p>/<ul> elements provide the visual gap.
+                if (t === '') { j++; continue; }
+                if (t.startsWith('- ') || t.startsWith('* ')) {
+                    const items = [];
+                    while (j < inner.length) {
+                        const tt = inner[j].trimStart();
+                        if (!tt.startsWith('- ') && !tt.startsWith('* ')) break;
+                        items.push(`<li>${inlineToHtml(tt.replace(/^[-*]\s+/, ''))}</li>`);
+                        j++;
+                    }
+                    parts.push(`<ul>${items.join('')}</ul>`);
+                    continue;
+                }
+                parts.push(`<p>${inlineToHtml(inner[j])}</p>`);
+                j++;
+            }
+            html.push(`<blockquote>${parts.join('')}</blockquote>`);
             continue;
         }
 
