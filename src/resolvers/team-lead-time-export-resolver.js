@@ -86,7 +86,8 @@ export const exportTeamLeadTime = async (event) => {
         const teamLabel = titleSuffix || teams.join(', ');
         const pageTitle = `⏱️ [${today}] Lead Time / Cycle Time — ${teamLabel}${byClause}`;
 
-        // standalone=true: section heading = H2, teams = H3 (H1 is the page title)
+        // standalone=true: each team becomes its own H2 directly under the page H1
+        // (mirrors the Sprint export structure — no intermediate section wrapper).
         const lctSection   = formatLCTSection(teams, teamStats, true, true, true);
         const fullMarkdown = `# ⏱️ Lead Time / Cycle Time — ${teamLabel}\n\n${lctSection}`;
 

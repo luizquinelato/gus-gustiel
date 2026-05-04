@@ -8,8 +8,10 @@
 #   .\deploy.ps1 --docs --prod  → regenerate docs, then deploy to production
 #   .\deploy.ps1 --docs --all   → regenerate docs, then deploy to dev + prod
 #
-# Both Jira and Confluence are upgraded on every run.
-# manifest.yml is always restored after deploy (git checkout), even on failure.
+# Confluence is upgraded BEFORE Jira (avoids the multi-product 'unexpected error'
+# when a Confluence-only scope is added). Jira upgrade retries once on failure.
+# manifest.yml dev-name patch is reverted after deploy by restoring the saved
+# original bytes -- preserves any other uncommitted edits in the file.
 
 $flagProd = $args -contains '--prod'
 $flagAll  = $args -contains '--all'
@@ -52,12 +54,15 @@ function Deploy-Forge {
     Write-Host $bar -ForegroundColor DarkGray
     Write-Host ">> Deploying: $label" -ForegroundColor Cyan
 
+    # Snapshot manifest.yml before any in-place edits so we can restore the
+    # exact bytes in `finally` -- avoids `git checkout` wiping uncommitted edits.
+    $manifestOriginal = Get-Content manifest.yml -Raw
+
     # Patch agent name in manifest for non-production deployments
     if (-not $isProd) {
         Write-Host "   Agent name: [DEV] Gustiel (Portfolio Sentinel)" -ForegroundColor Yellow
-        (Get-Content manifest.yml) `
-            -replace 'name: Gustiel \(Portfolio Sentinel\)', 'name: "[DEV] Gustiel"' `
-            | Set-Content manifest.yml
+        ($manifestOriginal -replace 'name: Gustiel \(Portfolio Sentinel\)', 'name: "[DEV] Gustiel"') `
+            | Set-Content manifest.yml -NoNewline
     }
 
     try {
@@ -69,18 +74,10 @@ function Deploy-Forge {
         }
         Write-Host "OK: Deploy complete" -ForegroundColor Green
 
-        # Install or upgrade Jira
-        Write-Host ">> Installing/upgrading Jira..." -ForegroundColor Cyan
-        forge install --upgrade --site $SITE --environment $ForgeEnv --product Jira --confirm-scopes --non-interactive
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "   No existing install found -- running fresh install for Jira..." -ForegroundColor Yellow
-            forge install --site $SITE --environment $ForgeEnv --product Jira --confirm-scopes --non-interactive
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "WARN: Jira install exited $LASTEXITCODE -- run 'forge install' manually if needed." -ForegroundColor Yellow
-            }
-        }
-
-        # Install or upgrade Confluence
+        # Install or upgrade Confluence FIRST.
+        # When a Confluence-only scope is added, upgrading Jira first triggers a
+        # generic 'An unexpected error occurred' until Confluence has accepted
+        # the new scope state. Confluence-first avoids that.
         Write-Host ">> Installing/upgrading Confluence..." -ForegroundColor Cyan
         forge install --upgrade --site $SITE --environment $ForgeEnv --product Confluence --confirm-scopes --non-interactive
         if ($LASTEXITCODE -ne 0) {
@@ -91,11 +88,25 @@ function Deploy-Forge {
             }
         }
 
+        # Install or upgrade Jira (retry once: scope state may still be syncing).
+        Write-Host ">> Installing/upgrading Jira..." -ForegroundColor Cyan
+        forge install --upgrade --site $SITE --environment $ForgeEnv --product Jira --confirm-scopes --non-interactive
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "   Jira upgrade failed -- retrying once after Confluence sync..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 3
+            forge install --upgrade --site $SITE --environment $ForgeEnv --product Jira --confirm-scopes --non-interactive
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "WARN: Jira upgrade still failing -- run 'forge install --upgrade -p Jira' manually." -ForegroundColor Yellow
+            }
+        }
+
         Write-Host "OK: $label fully deployed and upgraded!" -ForegroundColor Green
     }
     finally {
-        # Always restore manifest.yml -- runs even if forge crashes mid-deploy
-        git checkout manifest.yml 2>$null
+        # Restore the exact manifest bytes captured at the start of this deploy.
+        # Preserves any uncommitted edits that were on disk before we patched
+        # the agent name. Runs even if forge crashes mid-deploy.
+        Set-Content -Path manifest.yml -Value $manifestOriginal -NoNewline
         if (-not $isProd) {
             Write-Host "   manifest.yml restored" -ForegroundColor DarkGray
         }

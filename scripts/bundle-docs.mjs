@@ -6,11 +6,20 @@
  *   ## 📋 User Guide
  *   ## 🔧 Technical Reference
  *
+ * Also reads release notes from docs/releases/MAJOR.MINOR.md (front-matter +
+ * "📣 What's New" + optional "🔧 Technical Changes" sections) and emits a
+ * RELEASES array sorted newest-first. Also reads ideas from docs/ideas/*.md
+ * (front-matter + freeform body) and emits an IDEAS array sorted alphabetically
+ * by title. The docs/pre-release/ folder is NOT bundled — it is a dev-only
+ * scratchpad.
+ *
  * Exports:
- *   USER_GUIDE_MD  — all skill User Guide sections combined (for Confluence User Guide page)
- *   TECH_REF_MD    — all skill Tech Reference sections + architecture doc (for Tech Reference page)
+ *   USER_GUIDE_MD   — all skill User Guide sections combined (for Confluence User Guide page)
+ *   TECH_REF_MD     — all skill Tech Reference sections + architecture doc (for Architecture Guide page)
  *   ARCHITECTURE_MD — the raw architecture doc (for backward compat / standalone use)
- *   SCREENSHOTS    — JSON object { 'filename.png': 'base64...' } from assets/screenshots/
+ *   SCREENSHOTS     — JSON object { 'filename.png': 'base64...' } from assets/screenshots/
+ *   RELEASES        — array of { version, major, minor, date, title, whatsNew, techChanges } sorted newest-first
+ *   IDEAS           — array of { title, status, created, body } sorted alphabetically by title
  *
  * Usage:
  *   node scripts/bundle-docs.mjs        (direct)
@@ -26,7 +35,9 @@ const root      = join(__dirname, '..');
 
 function read(relPath) {
     try {
-        return readFileSync(join(root, relPath), 'utf8');
+        // Normalize CRLF → LF so section extraction (which looks for '\n## …\n')
+        // works regardless of how the source file is saved on disk.
+        return readFileSync(join(root, relPath), 'utf8').replace(/\r\n/g, '\n');
     } catch (e) {
         console.error(`ERROR: could not read ${relPath}: ${e.message}`);
         process.exit(1);
@@ -122,6 +133,98 @@ const TECH_REF_MD = [
 /** Raw architecture doc — kept for standalone use in skill-docs-resolver if needed */
 const ARCHITECTURE_MD = read('docs/architecture.md');
 
+// ── Release notes — docs/releases/MAJOR.MINOR.md ─────────────────────────────
+//
+// Each release file has YAML-ish front-matter with `version`, `date`, `title`,
+// followed by "## 📣 What's New" and optionally "## 🔧 Technical Changes".
+// Pre-release scratchpad (docs/pre-release/NEXT.md) is NOT bundled.
+
+const RELEASE_WHATS_NEW_HEADING  = "📣 What's New";
+const RELEASE_TECH_HEADING       = '🔧 Technical Changes';
+
+function parseFrontMatter(md) {
+    const m = md.match(/^---\n([\s\S]*?)\n---\n/);
+    if (!m) return { meta: {}, body: md };
+    const meta = {};
+    for (const line of m[1].split('\n')) {
+        const kv = line.match(/^([a-zA-Z][a-zA-Z0-9_-]*)\s*:\s*(.+)\s*$/);
+        if (kv) meta[kv[1]] = kv[2].trim();
+    }
+    return { meta, body: md.slice(m[0].length) };
+}
+
+function parseReleaseFile(filePath) {
+    const md          = read(filePath);
+    const { meta, body } = parseFrontMatter(md);
+    const versionStr  = String(meta.version || filePath.match(/([0-9]+\.[0-9]+)\.md$/)?.[1] || '');
+    const [majStr, minStr] = versionStr.split('.');
+    const major       = parseInt(majStr, 10);
+    const minor       = parseInt(minStr, 10);
+    if (Number.isNaN(major) || Number.isNaN(minor)) {
+        console.warn(`⚠️  Skipping release file with unparseable version: ${filePath}`);
+        return null;
+    }
+    const whatsNew    = extractSection('\n' + body, RELEASE_WHATS_NEW_HEADING, RELEASE_TECH_HEADING) || '';
+    const techChanges = extractSection('\n' + body, RELEASE_TECH_HEADING, null) || '';
+    return {
+        version:  `${major}.${minor}`,
+        major,
+        minor,
+        date:     meta.date  || '',
+        title:    meta.title || '',
+        whatsNew,
+        techChanges,
+    };
+}
+
+const releasesDir = join(root, 'docs', 'releases');
+let releaseFiles  = [];
+try {
+    releaseFiles = readdirSync(releasesDir)
+        .filter(f => extname(f).toLowerCase() === '.md')
+        .map(f => `docs/releases/${f}`);
+} catch (e) {
+    console.warn(`⚠️  Could not read releases directory: ${e.message}`);
+}
+
+// Newest-first by (major desc, minor desc)
+const RELEASES = releaseFiles
+    .map(parseReleaseFile)
+    .filter(Boolean)
+    .sort((a, b) => (b.major - a.major) || (b.minor - a.minor));
+
+// ── Ideas backlog — docs/ideas/*.md ──────────────────────────────────────────
+//
+// Each file: front-matter (title, status, created) + freeform markdown body.
+// Sorted alphabetically by title (case-insensitive). The Confluence export
+// uses destructive sync — files removed here are deleted from Confluence.
+
+function parseIdeaFile(filePath) {
+    const md             = read(filePath);
+    const { meta, body } = parseFrontMatter(md);
+    const title          = meta.title || filePath.match(/([^/\\]+)\.md$/)?.[1] || filePath;
+    return {
+        title,
+        status:  meta.status  || '',
+        created: meta.created || '',
+        body:    body.trim(),
+    };
+}
+
+const ideasDir = join(root, 'docs', 'ideas');
+let ideaFiles  = [];
+try {
+    ideaFiles = readdirSync(ideasDir)
+        .filter(f => extname(f).toLowerCase() === '.md')
+        .map(f => `docs/ideas/${f}`);
+} catch (e) {
+    console.warn(`⚠️  Could not read ideas directory: ${e.message}`);
+}
+
+const IDEAS = ideaFiles
+    .map(parseIdeaFile)
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+
 // ── Screenshots — base64-encode all files in assets/screenshots/ ──────────────
 const screenshotsDir  = join(root, 'assets', 'screenshots');
 const screenshotsObj  = {};
@@ -149,6 +252,8 @@ const lines = [
     `export const TECH_REF_MD     = ${JSON.stringify(TECH_REF_MD)};`,
     `export const ARCHITECTURE_MD = ${JSON.stringify(ARCHITECTURE_MD)};`,
     `export const SCREENSHOTS     = ${JSON.stringify(screenshotsObj)};`,
+    `export const RELEASES        = ${JSON.stringify(RELEASES)};`,
+    `export const IDEAS           = ${JSON.stringify(IDEAS)};`,
     '',
 ];
 
@@ -157,4 +262,4 @@ mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, 'index.js'), lines.join('\n'));
 
 const screenshotCount = Object.keys(screenshotsObj).length;
-console.log(`✅ docs bundled → src/docs/index.js  (${SKILL_FILES.length} skills, ${screenshotCount} screenshots, ${timestamp})`);
+console.log(`✅ docs bundled → src/docs/index.js  (${SKILL_FILES.length} skills, ${screenshotCount} screenshots, ${RELEASES.length} release(s), ${IDEAS.length} idea(s), ${timestamp})`);

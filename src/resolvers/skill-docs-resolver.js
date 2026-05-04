@@ -8,7 +8,7 @@
  * For the Technical Reference export, see architecture-guide-resolver.js.
  */
 
-import { getEnvFromJira, getUserEmail, getCurrentAccountId } from '../services/jira-api-service.js';
+import { getEnvFromJira }                                    from '../services/jira-api-service.js';
 import { getSpaceByKey, findPageByTitle, createConfluencePage,
          updateConfluencePage, findOrCreatePageByPath,
          uploadAttachment }                                   from '../services/confluence-api-service.js';
@@ -56,6 +56,12 @@ function buildUserGuideMarkdown(envName) {
         ``,
         `> **Version:** ${VERSION} · **Environment:** ${envName} · **Built by:** Gustavo Quinelato`,
         ``,
+        `> ℹ️ This page reflects the **current state** of Gustiel. For the history of changes per release, see the **📣 Gustiel Release Notes** page.`,
+        ``,
+        `**Showcase:**`,
+        ``,
+        `EMBED:https://drive.google.com/file/d/15VNjU-YhrKsArGyu-0iC-Hln9SpyUV_V/view`,
+        ``,
         preamble,
         `---`,
         ``,
@@ -71,7 +77,6 @@ export const exportSkillDocs = async (event) => {
     const spaceKey   = (event?.payload?.spaceKey   || event?.spaceKey   || '').trim().toUpperCase();
     const parentPath = (event?.payload?.parentPath || event?.parentPath || '').trim();
     const folderId   = (event?.payload?.folderId   || event?.folderId   || '').trim();
-    const accountId  = await getCurrentAccountId(event);
 
     if (!spaceKey) return { status: 'ERROR', message: 'Please provide a Confluence space key (e.g. GUSTIEL).' };
 
@@ -82,10 +87,8 @@ export const exportSkillDocs = async (event) => {
         return { status: 'ERROR', message: `Could not detect Jira environment: ${e.message}` };
     }
 
-    const today     = new Intl.DateTimeFormat('en-CA', { timeZone: REPORT_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    const userEmail = await getUserEmail(accountId);
-    const byClause  = userEmail ? ` by [${userEmail}]` : '';
-    const pageTitle = `📖 [${today}] Gustiel User Guide${byClause}`;
+    // Stable title — no date / no email — so re-runs upsert in place.
+    const pageTitle = `📖 Gustiel User Guide`;
 
     const rawMarkdown = buildUserGuideMarkdown(env.name);
     const fullContent = markdownToStorage(rawMarkdown, { uniformColumns: true });
@@ -155,6 +158,7 @@ export const exportSkillDocs = async (event) => {
         // Pass parentId explicitly so the page is NOT moved to the space root
         // (Confluence v2 PUT moves the page if parentId is omitted and the page lives
         // inside a native folder).
+        let reRenderError = null;
         if (screenshotFiles.length > 0 && uploadResults.some(r => r.status === 'ok')) {
             try {
                 const currentVersion = page.version?.number ?? (wasUpdated ? null : 1);
@@ -162,13 +166,32 @@ export const exportSkillDocs = async (event) => {
                     page = await updateConfluencePage(page.id, currentVersion, space.id, pageTitle, storageBody, parentId || null);
                 }
             } catch (reRenderErr) {
-                // Non-fatal — images may still show on next page load
+                reRenderError = reRenderErr.message;
                 console.warn(`[exportSkillDocs] Re-render update failed: ${reRenderErr.message}`);
             }
         }
 
         const pageUrl = `${env.baseUrl}/wiki${page._links?.webui || `/spaces/${spaceKey}/pages/${page.id}`}`;
         const action  = wasMoved ? 'moved and updated' : wasUpdated ? 'updated' : 'exported';
+
+        const failedUploads = uploadResults.filter(r => r.status === 'failed');
+        const okUploads     = uploadResults.filter(r => r.status === 'ok');
+        const warningLines  = [];
+        if (failedUploads.length > 0) {
+            warningLines.push(`⚠️ ${failedUploads.length} screenshot upload(s) failed:`);
+            failedUploads.forEach(r => warningLines.push(`  • ${r.filename}: ${r.error}`));
+        }
+        if (reRenderError) {
+            warningLines.push(`⚠️ Re-render after upload failed: ${reRenderError}`);
+        }
+
+        const baseMessage = `✅ Gustiel User Guide ${action} → ${pageUrl}`;
+        const summary     = okUploads.length > 0
+            ? `${baseMessage}\n📎 ${okUploads.length}/${screenshotFiles.length} screenshot(s) uploaded.`
+            : baseMessage;
+        const message     = warningLines.length > 0
+            ? `${summary}\n${warningLines.join('\n')}`
+            : summary;
 
         return {
             status:        'SUCCESS',
@@ -179,7 +202,8 @@ export const exportSkillDocs = async (event) => {
             wasUpdated,
             wasMoved,
             screenshots:   uploadResults,
-            message:       `✅ Gustiel User Guide ${action} → ${pageUrl}`,
+            reRenderError,
+            message,
         };
     } catch (err) {
         return { status: 'ERROR', message: err.message };

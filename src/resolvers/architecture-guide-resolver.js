@@ -1,14 +1,14 @@
 /**
  * Architecture Guide Resolver — export-architecture-guide action
  *
- * Exports the Gustiel TECHNICAL REFERENCE to Confluence — a developer-focused
+ * Exports the Gustiel ARCHITECTURE GUIDE to Confluence — a developer-focused
  * page containing the Technical Reference section from each skill doc,
  * followed by the full architecture document.
  *
  * For the User Guide export (business-friendly), see skill-docs-resolver.js.
  */
 
-import { getEnvFromJira, getUserEmail, getCurrentAccountId } from '../services/jira-api-service.js';
+import { getEnvFromJira }                                     from '../services/jira-api-service.js';
 import { getSpaceByKey, findPageByTitle, createConfluencePage,
          updateConfluencePage, findOrCreatePageByPath }       from '../services/confluence-api-service.js';
 import { REPORT_TIMEZONE, VERSION }                           from '../config/constants.js';
@@ -17,11 +17,13 @@ import { TECH_REF_MD }                                        from '../docs/inde
 
 // ── Page markdown ─────────────────────────────────────────────────────────────
 
-function buildTechRefMarkdown(envName) {
+function buildArchitectureGuideMarkdown(envName) {
     return [
-        `# 🏗️ Gustiel — Technical Reference`,
+        `# 🏗️ Gustiel — Architecture Guide`,
         ``,
         `> **Version:** ${VERSION} · **Environment:** ${envName} · **Built by:** Gustavo Quinelato`,
+        ``,
+        `> ℹ️ This page reflects the **current state** of Gustiel's internal architecture. For the history of changes per release, see the **📣 Gustiel Release Notes** page.`,
         ``,
         `> This page documents internal implementation details — resolvers, ETL pipeline, data flow,`,
         `> and architectural patterns. For the user-facing guide, see the Gustiel User Guide page.`,
@@ -38,7 +40,6 @@ export const exportArchitectureGuide = async (event) => {
     const spaceKey   = (event?.payload?.spaceKey   || event?.spaceKey   || '').trim().toUpperCase();
     const parentPath = (event?.payload?.parentPath || event?.parentPath || '').trim();
     const folderId   = (event?.payload?.folderId   || event?.folderId   || '').trim();
-    const accountId  = await getCurrentAccountId(event);
 
     if (!spaceKey) return { status: 'ERROR', message: 'Please provide a Confluence space key (e.g. GUSTIEL).' };
 
@@ -49,12 +50,10 @@ export const exportArchitectureGuide = async (event) => {
         return { status: 'ERROR', message: `Could not detect Jira environment: ${e.message}` };
     }
 
-    const today     = new Intl.DateTimeFormat('en-CA', { timeZone: REPORT_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    const userEmail = await getUserEmail(accountId);
-    const byClause  = userEmail ? ` by [${userEmail}]` : '';
-    const pageTitle = `🏗️ [${today}] Gustiel Technical Reference${byClause}`;
+    // Stable title — no date / no email — so re-runs upsert in place.
+    const pageTitle = `🏗️ Gustiel Architecture Guide`;
 
-    const rawMarkdown = buildTechRefMarkdown(env.name);
+    const rawMarkdown = buildArchitectureGuideMarkdown(env.name);
     const fullContent = markdownToStorage(rawMarkdown, { uniformColumns: true });
 
     try {
@@ -121,7 +120,7 @@ export const exportArchitectureGuide = async (event) => {
             action,
             wasUpdated,
             wasMoved,
-            message:   `✅ Gustiel Technical Reference ${action} → ${pageUrl}`,
+            message:   `✅ Gustiel Architecture Guide ${action} → ${pageUrl}`,
         };
     } catch (err) {
         return { status: 'ERROR', message: err.message };

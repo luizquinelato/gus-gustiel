@@ -83,10 +83,20 @@ Exports the Gustiel **User Guide** to Confluence — all skills in business-frie
 - *"Document all Gustiel skills to Confluence"*, *"Export the help to Confluence"*
 → Follow the **Skill Documentation delivery path** below. Use `export-skill-docs`.
 
-#### 9b. 🏗️ Export Architecture Guide *(documentation — exports Technical Reference to Confluence)*
-Exports the **Technical Reference** to Confluence — developer-focused, with technical notes, internal pipeline diagrams, and the full architecture document.
+#### 9b. 🏗️ Export Architecture Guide *(documentation — exports Architecture Guide to Confluence)*
+Exports the **Architecture Guide** to Confluence — developer-focused, with technical notes, internal pipeline diagrams, and the full architecture document.
 - *"Export architecture guide"*, *"Export Gustiel technical reference"*, *"Export the developer docs to Confluence"*
 → Follow the **Skill Documentation delivery path** below. Use `export-architecture-guide`.
+
+#### 9c. 📣 Export Release Notes *(documentation — exports the historical release log to Confluence)*
+Exports the Gustiel **Release Notes** as a three-tier Confluence hierarchy: a root page (organizer), one page per major version (e.g. `v4`, `v5` — also organizers), and one child page per `MAJOR.MINOR` release. All page titles are stable so re-runs upsert the tree in place. **Additive only** — deleting a release file does NOT delete its Confluence page.
+- *"Export release notes"*, *"Export Gustiel release notes"*, *"Update the release notes page"*, *"Export the changelog"*
+→ Follow the **Skill Documentation delivery path** below. Use `export-release-notes`.
+
+#### 9d. 💡 Export Ideas Backlog *(documentation — exports the forward-looking ideas list to Confluence)*
+Exports the Gustiel **Ideas Backlog** as a two-tier Confluence hierarchy: a root page (organizer) and one child page per idea (sorted alphabetically). Uses **destructive sync** scoped to the immediate children of the backlog root: any child page whose title doesn't match a current idea file in `docs/ideas/` is **deleted**. The backlog mirrors the source folder exactly.
+- *"Export ideas backlog"*, *"Export Gustiel ideas"*, *"Update the ideas page"*, *"Export the backlog"*, *"Export ideas"*
+→ Follow the **Skill Documentation delivery path** below. Use `export-ideas-backlog`.
 
 #### 10. 🗑️ Clear My Session Cache *(self-service — your data only)*
 Deletes your own cached portfolio session data. Forces fresh extraction on your next export or analysis. Other users are unaffected.
@@ -566,12 +576,14 @@ trendData.predictability.label                 — "High" | "Medium" | "Low"
 
 ---
 
-## 🏃 Skill 6 — Export Skill Documentation / Architecture Guide
+## 🏃 Skill 6 — Export Skill Documentation / Architecture Guide / Release Notes / Ideas Backlog
 
 **Trigger phrases:**
-- Both docs: *"export your documents"*, *"export both"*, *"export everything"*, *"export docs"*, *"export Gustiel docs"*
+- All four: *"export your documents"*, *"export both"*, *"export all"*, *"export everything"*, *"export docs"*, *"export Gustiel docs"*
 - User Guide only: *"export skill documentation"*, *"create a Gustiel user guide in Confluence"*, *"export the help to Confluence"*, *"export user guide"*
-- Tech Reference only: *"export architecture guide"*, *"export Gustiel technical reference"*, *"export the developer docs"*
+- Architecture Guide only: *"export architecture guide"*, *"export Gustiel technical reference"*, *"export the developer docs"*
+- Release Notes only: *"export release notes"*, *"export Gustiel release notes"*, *"update the release notes page"*, *"export the changelog"*
+- Ideas Backlog only: *"export ideas backlog"*, *"export Gustiel ideas"*, *"update the ideas page"*, *"export the backlog"*, *"export ideas"*
 
 → Follow the **Skill Documentation delivery path** below.
 
@@ -579,19 +591,21 @@ trendData.predictability.label                 — "High" | "Medium" | "Low"
 
 ### 📚 Skill Documentation delivery path
 
-This is a single-step export — no Jira keys, no ETL, no cache. Follow these steps:
+This is a single-step export — no Jira keys, no ETL, no cache. All four doc actions write to **stable Confluence titles** so re-runs upsert in place. Follow these steps:
 
 **Step SD-1 — Determine which pages to export (do NOT ask the user)**
 
-⚠️ **Never ask the user to choose between User Guide and Architecture Guide.** Decide immediately:
+⚠️ **Never ask the user to choose between the four docs.** Decide immediately:
 
 | What the user said | What to export |
 |---|---|
-| "docs", "documents", "both", "everything", "your docs", "Gustiel docs", or anything not explicitly naming one page | **Both** — call `export-skill-docs` then `export-architecture-guide` |
+| "docs", "documents", "both", "all", "everything", "your docs", "Gustiel docs", or anything not explicitly naming one page | **All four** — call `export-skill-docs`, then `export-architecture-guide`, then `export-release-notes`, then `export-ideas-backlog` |
 | Explicitly "user guide", "skill docs", "skill documentation", "help" | **User Guide only** — call `export-skill-docs` |
 | Explicitly "architecture guide", "technical reference", "developer docs" | **Architecture Guide only** — call `export-architecture-guide` |
+| Explicitly "release notes", "changelog", "release history" | **Release Notes only** — call `export-release-notes` |
+| Explicitly "ideas backlog", "ideas", "backlog", "proposals" | **Ideas Backlog only** — call `export-ideas-backlog` |
 
-**Default is always BOTH.** When in doubt, export both.
+**Default is always ALL FOUR.** When in doubt, export all four. Note: "both" is treated as ALL FOUR (legacy term — the docs are now four pages).
 
 **Step SD-2 — Ask for Confluence space (once)**
 
@@ -613,7 +627,7 @@ Call each applicable action with the same placement params:
 - `folderId` = numeric folder ID if option 2 was chosen
 - *(no placement param)* if option 3 was chosen
 
-Call `export-skill-docs` first, then `export-architecture-guide`. Do not wait for confirmation between them — call them sequentially without interruption.
+When all four docs are being exported, call them in this order without waiting for confirmation between them: `export-skill-docs` → `export-architecture-guide` → `export-release-notes` → `export-ideas-backlog`. When only a subset is requested, call only those.
 
 **On `status === "SUCCESS"` for each action:**
 > Display `message` verbatim. Do NOT add a separate `📄 [pageTitle] → [pageUrl]` line — the URL is already embedded in `message`.

@@ -529,18 +529,21 @@ The page title always includes the current date in `REPORT_TIMEZONE` (BRT) for t
 When a page body contains `![alt](ATTACH:filename.png)` references, the attachment must be uploaded **before** Confluence can resolve it. `skill-docs-resolver.js` implements this as a mandatory two-step flow:
 
 1. **Upsert the page** — create or update with the full body (including `<ac:image>` tags that still say "Preview unavailable" at this point).
-2. **Upload each attachment** — call `uploadAttachment(pageId, filename, base64Data)` for every screenshot in `SCREENSHOTS`. On success, Confluence stores the binary file against the page ID.
+2. **Upload (or replace) each attachment** — call `uploadAttachment(pageId, filename, base64Data)` for every screenshot in `SCREENSHOTS`. The helper is idempotent: it first calls `findAttachmentByFilename(pageId, filename)` and, if a match exists, POSTs to `/child/attachment/{id}/data` (creating a new version of the existing attachment) instead of POSTing to `/child/attachment` (which returns HTTP 400 on a duplicate filename). On success, Confluence stores the binary file against the page ID.
 3. **Re-PUT the page body** — a second `updateConfluencePage` call with the identical body forces Confluence to re-resolve all `<ri:attachment>` references now that the files exist. Without this step the images remain "Preview unavailable" even after upload.
+
+Per-screenshot upload outcomes are returned in `response.screenshots[]` (`{ filename, status: 'ok' | 'failed', error? }`). Re-render failures surface as `response.reRenderError` and are appended to `response.message` as a `⚠️` warning line so they're visible in Rovo chat without needing the Forge tunnel.
 
 #### `uploadAttachment` — Implementation Notes
 
 | Decision | Value | Why |
 |---|---|---|
-| **API version** | v1 (`/wiki/rest/api/content/{id}/child/attachment`) | v2 has no `POST /pages/{id}/attachments` endpoint |
+| **API version** | v1 (`/wiki/rest/api/content/{id}/child/attachment` for create, `…/child/attachment/{id}/data` for replace) | v2 has no `POST /pages/{id}/attachments` endpoint |
+| **Idempotency** | Lookup by filename → branch to `/data` sub-endpoint when found | The bare `/child/attachment` POST returns HTTP 400 on duplicate filenames; the `/data` sub-endpoint creates a new version of the existing attachment instead |
 | **Auth context** | `asApp()` | `asUser()` returns "Authentication Required" in Forge backend resolvers; v1 rejects OAuth Bearer tokens |
 | **Scope** | `write:confluence-file` (classic) | The only Atlassian scope that authorises attachment uploads; `write:confluence-content` (page content) and `write:attachment:confluence` (granular, v2-only) both fail with "scope does not match" |
 | **CSRF bypass** | `X-Atlassian-Token: nocheck` | Required for all v1 multipart `POST` requests; without it Confluence returns 403 |
-| **Body** | Native `FormData` with `Blob` | `atob(base64Data)` → `Uint8Array` → `Blob` → `formData.append('file', blob, filename)` |
+| **Body** | Native `FormData` with `Blob` + `minorEdit=true` | `atob(base64Data)` → `Uint8Array` → `Blob` → `formData.append('file', blob, filename)`; `minorEdit` keeps the parent page's version number from being bumped on each re-upload |
 | **Image alignment** | `ac:align="center"` on `<ac:image>` | Standard Confluence storage attribute for centered image rendering |
 
 > **Scope pitfall**: `write:confluence-file` is a distinct scope from `write:confluence-content`. The former grants file/attachment upload rights; the latter grants page content write rights. They are not interchangeable and both must be declared in `manifest.yml` if both operations are needed.

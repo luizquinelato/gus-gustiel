@@ -40,6 +40,96 @@ Use **Semantic Versioning (MAJOR.MINOR.PATCH)**:
 
 ---
 
+## Release Notes Lifecycle Rule
+
+Documentation is split into two layers with **different update cadences**:
+
+| Layer | Files | Reflects | Updated when |
+|---|---|---|---|
+| **Baseline** | User Guide (`docs/skills/*.md`) + Architecture Guide (`docs/architecture.md`) | Always the **current state** of Gustiel | Whenever a skill or architectural detail actually changes |
+| **Release Notes** | `docs/releases/MAJOR.MINOR.md` | Historical **delta** between consecutive MINOR/MAJOR versions | Only at MINOR/MAJOR consolidation — never per PATCH |
+
+### Pre-release scratchpad (PATCH cycle)
+
+- `docs/pre-release/NEXT.md` is a single optional free-form scratchpad for context worth preserving across the PATCH cycle (rationale, dead-ends, Forge limits hit). **Not bundled, not exported, never shown to users.**
+- For routine PATCH bumps (bug fixes, typo, prompt tweak) **nothing needs to be written** — the commit history and code state are enough.
+
+### Consolidation (MINOR / MAJOR bump)
+
+When the user asks to consolidate a release (e.g. "consolidate 4.54", "ship 5.0"), I:
+1. Synthesize a new file `docs/releases/MAJOR.MINOR.md` describing the delta from the previous MINOR/MAJOR to current HEAD. Sources: `git log`, `git diff`, `NEXT.md`, and current code state. **Deduplicate intermediate iterations — describe only the final state.**
+2. Update the **Baseline** (User Guide + Architecture Guide) for any skill/architecture that changed.
+3. Bump `VERSION` in `src/config/constants.js` (MINOR/MAJOR rules above).
+4. Reset `docs/pre-release/NEXT.md` to empty.
+
+PATCH bumps **never** create a release file. Critical PATCH fixes (e.g. 4.54.1) are not retroactively edited into the existing 4.54 release page; they only resurface as a "Fixed since 4.54.0" line in the next MINOR's release note when relevant.
+
+### Release file format
+
+```markdown
+---
+version: 4.54
+date: 2026-04-30
+title: Release Notes Feature
+---
+
+## 📣 What's New
+(user-facing description)
+
+## 🔧 Technical Changes
+(architecture/internal — optional; omit if none)
+```
+
+- File name is **`MAJOR.MINOR.md`** (no PATCH digit — e.g. `4.54.md`, `5.0.md`).
+- `version` field matches the file name.
+- `date` is the consolidation date (YYYY-MM-DD).
+
+---
+
+## Documentation Title Stability Rule
+
+**Documentation pages** (User Guide, Architecture Guide, Release Notes root, Major bucket pages, per-Release pages, Ideas Backlog root, per-Idea pages) MUST use **stable Confluence titles** — no date, no user email, no run-specific suffix. This is what allows re-running the export to **replace the existing page tree in place** instead of creating duplicates.
+
+| Page kind | Stable title pattern | Body |
+|---|---|---|
+| User Guide | `📖 Gustiel User Guide` | Full content |
+| Architecture Guide | `🏗️ Gustiel Architecture Guide` | Full content |
+| Release Notes root | `📣 Gustiel Release Notes` | Organizer (no per-release listing) |
+| Major bucket | `v4`, `v5`, `v6` … | Organizer (no per-release listing) |
+| Per-release page | `v4.54 — <title from front-matter>` | Full content |
+| Ideas Backlog root | `💡 Gustiel Ideas Backlog` | Organizer (short intro only) |
+| Per-idea page | `<title from front-matter>` | Full content |
+
+**Release Notes are append-only** — the root and major-bucket pages are deliberately content-less organizers (Confluence's native page tree handles navigation). Deleting a release file from `docs/releases/` and re-exporting will **not** remove the corresponding Confluence page; the orphan stays under its `vX` bucket. This is intentional: the export is purely additive, never destructive. Manual cleanup in Confluence is required if you actually want a release page gone.
+
+**Portfolio reports and team reports** (`export-to-confluence`, `export-team-sprint`, `export-team-lead-time`) keep their existing `[YYYY-MM-DD] … by [email]` titles — they are point-in-time snapshots, not living documents.
+
+---
+
+## Ideas Backlog Lifecycle Rule
+
+The Ideas Backlog is the **only** documentation export that uses **destructive sync**. It mirrors `docs/ideas/*.md` exactly into Confluence.
+
+| Action in `docs/ideas/` | Effect of next `export-ideas-backlog` |
+|---|---|
+| Add `<idea>.md` | Confluence page created under `💡 Gustiel Ideas Backlog`. |
+| Edit body / front-matter (title unchanged) | Confluence page upserted in place. |
+| **Rename** the `title:` in front-matter | Old-title page is **deleted** (orphan), new-title page is created. |
+| **Delete** the `.md` file | Confluence page is **deleted**. |
+
+### Hard guarantees
+
+- **Scoped deletion.** `ideas-backlog-resolver.js` lists only the **immediate children** of the `💡 Gustiel Ideas Backlog` root and deletes only those whose title doesn't match a current idea file. Nothing outside that one parent is ever touched. Never widen this scope to the whole space.
+- **Comments are lost on delete.** Confluence comments live on the page; deleting the page deletes its comments. Idea feedback must therefore be collected via chat / talk, **not** Confluence comments. Document this in any user-facing change to the feature.
+- **Idea files live in `docs/ideas/`** — front-matter (`title`, optional `status`, `created`) plus a freeform markdown body. Bundled into `IDEAS` by `scripts/bundle-docs.mjs`.
+- **Required scope:** `delete:page:confluence` in `manifest.yml`. Used only by `deleteConfluencePage` in `confluence-api-service.js`, which is in turn called only by `ideas-backlog-resolver.js`.
+
+### When NOT to copy this pattern
+
+Release Notes, User Guide, and Architecture Guide are explicitly **not** allowed to use destructive sync — historical and current-state docs must survive a missing/renamed source file, since the source of truth there is the consolidated repo, not the Confluence tree. Only the Ideas Backlog (where the local folder is the canonical "what's still being considered" list) gets destructive behaviour.
+
+---
+
 ## ETL Architecture Rule
 
 The codebase follows a strict **ETL (Extract → Transform → Load)** pattern.

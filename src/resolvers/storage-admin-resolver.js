@@ -21,7 +21,7 @@
  *   • isAdmin()              — true if accountId === SUPER_ADMIN or is in registry.
  */
 
-import { storage, startsWith } from '@forge/api';
+import { storage, startsWith, asUser, asApp, route } from '@forge/api';
 import { SUPER_ADMIN_ACCOUNT_ID, ADMIN_REGISTRY_KEY,
          SESSION_KEY_PREFIX }                         from '../config/constants.js';
 import { getCurrentAccountId } from '../services/jira-api-service.js';
@@ -51,21 +51,81 @@ async function isAdmin(accountId) {
     return registry.some(entry => entry.accountId === accountId);
 }
 
-/** Fetch a Jira user's display name and email by accountId. Returns partial data on failure. */
-async function fetchUserProfile(accountId) {
-    try {
-        const resp = await api.asUser().requestJira(route`/rest/api/3/user?accountId=${accountId}`, {
-            headers: { Accept: 'application/json' },
-        });
-        const data = await resp.json();
-        return {
-            accountId,
-            displayName:  data.displayName  || null,
-            emailAddress: data.emailAddress  || null,
-        };
-    } catch (_) {
-        return { accountId, displayName: null, emailAddress: null };
+/**
+ * Fetch a Jira user's display name and email by accountId.
+ *
+ * Strategy (first win):
+ *   0. asUser() + /rest/api/3/myself — used ONLY when the requested accountId
+ *      equals the caller's accountId. /myself bypasses Atlassian profile-level
+ *      email privacy (which often hides emailAddress on /user?accountId=…).
+ *   1. asApp() + /rest/api/3/user?accountId=… — works for any user via app
+ *      token. emailAddress may be omitted if the user's profile hides it.
+ *   2. asUser() + /rest/api/3/user?accountId=… — fallback when asApp() lacks
+ *      visibility into the requested user's profile.
+ *
+ * Returns partial { accountId, displayName: null, emailAddress: null } on failure.
+ *
+ * @param {string} accountId         - Account ID to look up
+ * @param {string} [callerAccountId] - Optional accountId of the calling user;
+ *                                     when it matches `accountId`, /myself is tried first
+ */
+async function fetchUserProfile(accountId, callerAccountId = null) {
+    // Attempt 0: /myself when the caller is asking about themselves.
+    // Bypasses Atlassian profile privacy and reliably returns the email.
+    if (callerAccountId && accountId === callerAccountId) {
+        try {
+            const r0 = await asUser().requestJira(
+                route`/rest/api/3/myself`,
+                { headers: { Accept: 'application/json' } }
+            );
+            if (r0.ok) {
+                const d0 = await r0.json();
+                if (d0.displayName || d0.emailAddress) {
+                    return {
+                        accountId,
+                        displayName:  d0.displayName  || null,
+                        emailAddress: d0.emailAddress || null,
+                    };
+                }
+            }
+        } catch { /* fall through to attempt 1 */ }
     }
+
+    // Attempt 1: asApp() — works for any user via app token
+    try {
+        const r1 = await asApp().requestJira(
+            route`/rest/api/3/user?accountId=${accountId}`,
+            { headers: { Accept: 'application/json' } }
+        );
+        if (r1.ok) {
+            const d1 = await r1.json();
+            if (d1.displayName || d1.emailAddress) {
+                return {
+                    accountId,
+                    displayName:  d1.displayName  || null,
+                    emailAddress: d1.emailAddress || null,
+                };
+            }
+        }
+    } catch { /* fall through to attempt 2 */ }
+
+    // Attempt 2: asUser() — fallback when app context can't see the profile
+    try {
+        const r2 = await asUser().requestJira(
+            route`/rest/api/3/user?accountId=${accountId}`,
+            { headers: { Accept: 'application/json' } }
+        );
+        if (r2.ok) {
+            const d2 = await r2.json();
+            return {
+                accountId,
+                displayName:  d2.displayName  || null,
+                emailAddress: d2.emailAddress || null,
+            };
+        }
+    } catch { /* both attempts failed */ }
+
+    return { accountId, displayName: null, emailAddress: null };
 }
 
 // ── Storage helpers ───────────────────────────────────────────────────────────
@@ -382,9 +442,20 @@ export const listAdmins = async (event) => {
     }
 
     const [superAdminProfile, registry] = await Promise.all([
-        fetchUserProfile(SUPER_ADMIN_ACCOUNT_ID),
+        fetchUserProfile(SUPER_ADMIN_ACCOUNT_ID, accountId),
         getAdminRegistry(),
     ]);
+
+    // Re-enrich any registry entry that matches the caller via /myself.
+    // Lets each admin see their own email even when stored profile lacks it
+    // (Atlassian profile-level email privacy hides it from /user?accountId=…).
+    const enrichedRegistry = await Promise.all(
+        registry.map(e =>
+            (!e.emailAddress && e.accountId === accountId)
+                ? fetchUserProfile(e.accountId, accountId)
+                : e
+        )
+    );
 
     const formatEntry = (e) => {
         const name  = e.displayName  || '_(no name)_';
@@ -395,9 +466,9 @@ export const listAdmins = async (event) => {
     const lines = [
         `👑 **Super-admin (immutable):** ${formatEntry(superAdminProfile)}`,
         '',
-        registry.length === 0
+        enrichedRegistry.length === 0
             ? '_No additional admins in the dynamic registry._'
-            : `**Dynamic admins (${registry.length}):**\n${registry.map(formatEntry).join('\n')}`,
+            : `**Dynamic admins (${enrichedRegistry.length}):**\n${enrichedRegistry.map(formatEntry).join('\n')}`,
     ];
     return { status: 'SUCCESS', message: lines.join('\n') };
 };

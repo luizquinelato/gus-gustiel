@@ -20,4 +20,6 @@ export { exportTeamSprint }                   from './resolvers/team-sprint-expo
 export { exportTeamLeadTime }                 from './resolvers/team-lead-time-export-resolver.js';
 export { exportSkillDocs }                    from './resolvers/skill-docs-resolver.js';
 export { exportArchitectureGuide }            from './resolvers/architecture-guide-resolver.js';
+export { exportReleaseNotes }                 from './resolvers/release-notes-resolver.js';
+export { exportIdeasBacklog }                 from './resolvers/ideas-backlog-resolver.js';
 
