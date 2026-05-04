@@ -8,7 +8,7 @@
  * For the Technical Reference export, see architecture-guide-resolver.js.
  */
 
-import { getEnvFromJira, getUserEmail, getCurrentAccountId } from '../services/jira-api-service.js';
+import { getEnvFromJira }                                    from '../services/jira-api-service.js';
 import { getSpaceByKey, findPageByTitle, createConfluencePage,
          updateConfluencePage, findOrCreatePageByPath,
          uploadAttachment }                                   from '../services/confluence-api-service.js';
@@ -56,6 +56,12 @@ function buildUserGuideMarkdown(envName) {
         ``,
         `> **Version:** ${VERSION} · **Environment:** ${envName} · **Built by:** Gustavo Quinelato`,
         ``,
+        `> ℹ️ This page reflects the **current state** of Gustiel. For the history of changes per release, see the **📣 Gustiel Release Notes** page.`,
+        ``,
+        `**Showcase:**`,
+        ``,
+        `EMBED:https://drive.google.com/file/d/15VNjU-YhrKsArGyu-0iC-Hln9SpyUV_V/view`,
+        ``,
         preamble,
         `---`,
         ``,
@@ -71,7 +77,6 @@ export const exportSkillDocs = async (event) => {
     const spaceKey   = (event?.payload?.spaceKey   || event?.spaceKey   || '').trim().toUpperCase();
     const parentPath = (event?.payload?.parentPath || event?.parentPath || '').trim();
     const folderId   = (event?.payload?.folderId   || event?.folderId   || '').trim();
-    const accountId  = await getCurrentAccountId(event);
 
     if (!spaceKey) return { status: 'ERROR', message: 'Please provide a Confluence space key (e.g. GUSTIEL).' };
 
@@ -82,10 +87,8 @@ export const exportSkillDocs = async (event) => {
         return { status: 'ERROR', message: `Could not detect Jira environment: ${e.message}` };
     }
 
-    const today     = new Intl.DateTimeFormat('en-CA', { timeZone: REPORT_TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    const userEmail = await getUserEmail(accountId);
-    const byClause  = userEmail ? ` by [${userEmail}]` : '';
-    const pageTitle = `📖 [${today}] Gustiel User Guide${byClause}`;
+    // Stable title — no date / no email — so re-runs upsert in place.
+    const pageTitle = `📖 Gustiel User Guide`;
 
     const rawMarkdown = buildUserGuideMarkdown(env.name);
     const fullContent = markdownToStorage(rawMarkdown, { uniformColumns: true });

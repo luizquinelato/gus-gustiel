@@ -66,7 +66,7 @@ Two environments exist: **development** and **production**. There is no staging 
 
 | Command | What it does |
 |---|---|
-| `.\deploy.ps1` | Deploy to **development only**. Patches manifest to rename agent to `[DEV] Gustiel` before deploy; restores `manifest.yml` via `git checkout` in a `finally` block (runs even if Forge crashes). |
+| `.\deploy.ps1` | Deploy to **development only**. Snapshots `manifest.yml` to memory, patches it to rename agent to `[DEV] Gustiel`, deploys, then restores the original bytes in a `finally` block (runs even if Forge crashes). The snapshot/restore preserves any uncommitted edits in the file — unlike `git checkout`, which would wipe them. |
 | `.\deploy.ps1 --prod` | Deploy to **production only**. Manifest is untouched — agent deploys as `Gustiel (Portfolio Sentinel)`. |
 | `.\deploy.ps1 --all` | Deploy to **development first, then production** in sequence. |
 | `.\deploy.ps1 --docs` | **Regenerate `src/docs/index.js`** from all `docs/*.md` files (runs `node scripts/bundle-docs.mjs`), then deploy to development. Use this whenever you update a skill doc or `docs/architecture.md`. |
@@ -75,5 +75,5 @@ Two environments exist: **development** and **production**. There is no staging 
 
 > **When to use `--docs`:** Any time you edit a file under `docs/` (skill docs or architecture). The generated `src/docs/index.js` is committed to git — a plain `.\deploy.ps1` (no `--docs`) reuses the last-committed bundle without re-reading the markdown files.
 
-After each deploy, the script runs `forge install --upgrade` for both Jira and Confluence on the target site (`wexinc-sandbox-new.atlassian.net`). If no existing install is found, it falls back to a fresh install automatically.
+After each deploy, the script runs `forge install --upgrade` for **Confluence first, then Jira** on the target site (`wexinc-sandbox-new.atlassian.net`). Confluence-first avoids the generic `An unexpected error occurred` failure that surfaces when a Confluence-only scope is added and Jira is upgraded before Confluence has accepted the new scope state. The Jira upgrade retries once after a 3-second pause if the first attempt fails. If no existing install is found for either product, the script falls back to a fresh install automatically.
 

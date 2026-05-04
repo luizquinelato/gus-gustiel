@@ -15,6 +15,8 @@
  *   findOrCreatePageByPath(spaceId, pathString)           → parentId string | null
  *   findAttachmentByFilename(pageId, filename)            → { id, title, ... } | null
  *   uploadAttachment(pageId, filename, base64Data, mimeType?) → Confluence API response
+ *   getPageChildren(pageId)                               → [{ id, title, ... }] (immediate page children)
+ *   deleteConfluencePage(pageId)                          → boolean (true on success / 404)
  *
  * NOTE on folder support:
  *   The Confluence v2 API does NOT provide a way to search/list folders by title.
@@ -383,4 +385,55 @@ export async function uploadAttachment(pageId, filename, base64Data, mimeType = 
     }
 
     return response.json();
+}
+
+/**
+ * List the immediate page children of a Confluence page.
+ * Returns the raw v2 children entries (id, title, status, …) — pagination
+ * is followed transparently. Pages only — sub-folders are not returned by
+ * the /pages/{id}/children endpoint.
+ *
+ * @param {string} pageId - Numeric parent page ID
+ * @returns {Promise<Array<{ id: string, title: string }>>}
+ */
+export async function getPageChildren(pageId) {
+    const out = [];
+    let cursor = null;
+    do {
+        const qs       = `limit=250${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+        const response = await asApp().requestConfluence(
+            route`/wiki/api/v2/pages/${pageId}/children?${qs}`,
+            { headers: { 'Accept': 'application/json' } }
+        );
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            throw new Error(`Failed to list children of page ${pageId}: HTTP ${response.status} — ${text}`);
+        }
+        const data = await response.json();
+        for (const child of (data.results || [])) out.push(child);
+        // v2 next-cursor lives in the Link header; fall back to data._links.next if present.
+        const next = data._links?.next;
+        cursor = next ? new URL(next, 'https://placeholder').searchParams.get('cursor') : null;
+    } while (cursor);
+    return out;
+}
+
+/**
+ * Delete a Confluence page by ID. Idempotent — a 404 (already gone) is
+ * treated as success.
+ *
+ * @param {string} pageId - Numeric page ID
+ * @returns {Promise<boolean>} true on 2xx or 404, throws otherwise
+ */
+export async function deleteConfluencePage(pageId) {
+    const response = await asApp().requestConfluence(
+        route`/wiki/api/v2/pages/${pageId}`,
+        { method: 'DELETE', headers: { 'Accept': 'application/json' } }
+    );
+    if (response.status === 404) return true;
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`Failed to delete Confluence page ${pageId}: HTTP ${response.status} — ${text}`);
+    }
+    return true;
 }

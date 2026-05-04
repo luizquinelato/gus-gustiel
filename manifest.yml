@@ -34,6 +34,8 @@ modules:
         - export-team-lead-time
         - export-skill-docs
         - export-architecture-guide
+        - export-release-notes
+        - export-ideas-backlog
 
   function:
     - key: getAgentVersion
@@ -82,6 +84,10 @@ modules:
       handler: index.exportSkillDocs
     - key: exportArchitectureGuide
       handler: index.exportArchitectureGuide
+    - key: exportReleaseNotes
+      handler: index.exportReleaseNotes
+    - key: exportIdeasBacklog
+      handler: index.exportIdeasBacklog
 
   action:
     - key: get-agent-version
@@ -549,6 +555,66 @@ modules:
             Takes precedence over parentPath when provided.
           required: false
 
+    - key: export-release-notes
+      function: exportReleaseNotes
+      name: Export Release Notes
+      actionVerb: CREATE
+      description: >-
+        Exports the Gustiel Release Notes to Confluence — a three-tier hierarchy
+        (root organizer → major version buckets → per-release pages). Stable titles
+        ensure each run upserts existing pages in place. No Jira data is fetched.
+      inputs:
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: The Confluence space key where the page will be created (e.g. GUSTIEL).
+          required: true
+        parentPath:
+          title: Parent Page Path
+          type: string
+          description: >
+            Optional. Slash-separated page hierarchy under which the root page will
+            be nested (e.g. "Docs/Gustiel"). Pages are created if missing.
+          required: false
+        folderId:
+          title: Folder ID
+          type: string
+          description: >
+            Optional. Numeric ID of an existing Confluence native folder.
+            Extract from the folder URL after /folder/ (e.g. "52592641").
+            Takes precedence over parentPath when provided.
+          required: false
+
+    - key: export-ideas-backlog
+      function: exportIdeasBacklog
+      name: Export Ideas Backlog
+      actionVerb: CREATE
+      description: >-
+        Exports the Gustiel Ideas Backlog to Confluence — root organizer plus
+        per-idea pages sorted alphabetically. Destructive sync: child pages with
+        no matching docs/ideas/*.md file are deleted.
+      inputs:
+        spaceKey:
+          title: Confluence Space Key
+          type: string
+          description: The Confluence space key where the page will be created (e.g. GUSTIEL).
+          required: true
+        parentPath:
+          title: Parent Page Path
+          type: string
+          description: >
+            Optional. Slash-separated page hierarchy under which the root page will
+            be nested (e.g. "Docs/Gustiel"). Pages are created if missing.
+          required: false
+        folderId:
+          title: Folder ID
+          type: string
+          description: >
+            Optional. Numeric ID of an existing Confluence native folder.
+            Extract from the folder URL after /folder/ (e.g. "52592641").
+            Takes precedence over parentPath when provided.
+          required: false
+
 
 resources:
   - key: agent-prompts
@@ -575,7 +641,9 @@ permissions:
     - storage:app
     - write:page:confluence
     - read:page:confluence
+    - delete:page:confluence
     - read:space:confluence
     - read:folder:confluence
     - write:folder:confluence
     - write:attachment:confluence
+    - write:confluence-file

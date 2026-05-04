@@ -436,6 +436,18 @@ export function markdownToStorage(markdown, { uniformColumns = false } = {}) {
             i++; continue;
         }
 
+        // External embed via Atlassian Smart Card (embed appearance).
+        // Syntax: EMBED:url   (line starts with EMBED: followed by the URL)
+        // Renders as a Confluence Smart Link with embed appearance — Atlassian's
+        // Smart Card service produces an inline preview/player for supported
+        // providers (Google Drive, YouTube, Loom, Figma, etc.). No admin
+        // allowlisting required (unlike the iframe macro).
+        if (trimmed.startsWith('EMBED:')) {
+            const url = trimmed.slice(6).trim();
+            html.push(`<p><a href="${url}" data-card-appearance="embed">${url}</a></p>`);
+            i++; continue;
+        }
+
         // Paragraph
         html.push(`<p>${inlineToHtml(line)}</p>`);
         i++;
